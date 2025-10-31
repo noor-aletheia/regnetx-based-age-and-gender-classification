@@ -1,0 +1,98 @@
+# Dataset configuration
+dataset:
+  path: "/app/data"  # Root directory containing train/val/test folders
+  batch_size: 16
+  num_workers: 4
+  # Note: image_size and class counts are auto-detected from dataset
+  # age_classes: auto-detected from CSV
+  # gender_classes: auto-detected from CSV
+  # detected_image_size: auto-detected from images
+
+# Model Configuration
+models:
+  variants: ["regnetx_006", "regnetx_008", "regnetx_016"]
+  pretrained: true
+
+# Training Configuration
+training:
+  # Phase 1: Frozen backbone training
+  phase1:
+    epochs: 20
+    learning_rate: 1e-3
+    weight_decay: 1e-4
+    patience: 6  # Early stopping patience
+
+  # Phase 2: Full model fine-tuning
+  phase2:
+    epochs: 30
+    learning_rate: 1e-4
+    weight_decay: 1e-5
+    patience: 10
+  # Loss function
+  loss_type: "cross_entropy"  # Options: cross_entropy, focal
+  
+  # Optimizer settings
+  optimizer: "AdamW"
+  scheduler: "ReduceLROnPlateau"
+  scheduler_params:
+    factor: 0.5
+    patience: 3
+    min_lr: 1e-6
+  
+  # Loss weights (if needed for class imbalance)
+
+    # Loss weights (if needed for class imbalance)
+    age_loss_weight: 1.0
+    gender_loss_weight: 1.0
+
+  # Enhanced class weight calculation
+  class_weight_mode: "default"  # "default" or "power"
+  class_weight_power_alpha: 1.0  # Power scaling factor (alpha), only used if mode is "power"
+
+  # Alternative manual loss weights (optional)
+  loss_weights:
+    age: null  # e.g., [1.0, 2.0, 1.5, ...] or null to auto-calculate
+    gender: null  # e.g., [1.0, 1.2] or null to auto-calculate
+
+# Data augmentation
+augmentation:
+  train:
+    horizontal_flip: 0.5
+    rotation: 5  # Reduced for aligned face images
+    color_jitter:
+      brightness: 0.1  # Reduced for face images
+      contrast: 0.1    # Reduced for face images
+      saturation: 0.1  # Reduced for face images
+      hue: 0.05        # Reduced for face images
+    normalize:
+      mean: [0.485, 0.456, 0.406]
+      std: [0.229, 0.224, 0.225]
+  
+  val_test:
+    normalize:
+      mean: [0.485, 0.456, 0.406]
+      std: [0.229, 0.224, 0.225]
+
+# Output Configuration
+output:
+  models_dir: "/outputs/models"
+  logs_dir: "/outputs/logs"
+
+  tensorboard_dir: "/outputs/tensorboard"
+  checkpoint_every: 5  # Save checkpoint every N epochs
+  save_best_only: true
+
+# Hardware Configuration
+hardware:
+  device: "cuda"  # cuda or cpu
+  mixed_precision: true  # Use automatic mixed precision
+  compile_model: false  # Use torch.compile (requires PyTorch 2.0+)
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  save_metrics: true
+  plot_training_curves: true
+  export_onnx: true
+  export_onnx_fp16: true  # Also create FP16 version of ONNX models
+  enable_tensorboard: true
