@@ -1,6 +1,6 @@
 dataset:
   path: "/app/mixed_data_v2"
-  batch_size: 32
+  batch_size: 64
   num_workers: 4
   age_class_scheme: "8-class"
 
@@ -15,12 +15,11 @@ training:
     patience: 6
   phase2:
     epochs: 40
-    learning_rate: 1e-5
+    learning_rate: 1.5e-4
     weight_decay: 5e-4
-    patience: 10
-  loss_type: "focal"  # Options: cross_entropy, focal
+    patience: 15
+  loss_type: "focal"
   
-  # Optimizer settings
   optimizer: "AdamW"
   scheduler: "CosineAnnealingLR"
   scheduler_params:
@@ -37,15 +36,51 @@ training:
 augmentation:
   presets:
     strong:
-      horizontal_flip: 0.5
-      rotation: 20
+      # Spatial augmentations
+      at_least_one_bbox_random_crop: 0.3
+      d4_transform: 0.2
+      
+      # Blur effects (light intensity for face recognition)
+      gaussian_blur:
+        prob: 0.15
+        blur_limit: [1, 3]
+      defocus:
+        prob: 0.1
+        radius: [1, 2]
+      motion_blur:
+        prob: 0.1
+        blur_limit: [3, 5]
+      
+      # Noise and quality degradation
+      gaussian_noise:
+        prob: 0.15
+        var_limit: [10, 30]
+      downscale:
+        prob: 0.1
+        scale_range: [0.7, 0.9]
+      
+      # Enhancement and color manipulation
+      clahe:
+        prob: 0.2
+        clip_limit: [1, 2]
+      to_gray:
+        prob: 0.05
+      
+      # Geometric distortion
+      grid_distortion:
+        prob: 0.15
+        distort_limit: 0.1
+      
+      # Standard augmentations (reduced since pre-augmented)
+      rotation: 10
       color_jitter:
-        brightness: 0.4
-        contrast: 0.4
-        saturation: 0.4
-        hue: 0.1
+        brightness: 0.2
+        contrast: 0.2
+        saturation: 0.2
+        hue: 0.05
+      horizontal_flip: 0.5
       random_resized_crop: true
-      random_erasing: 0.25
+      random_erasing: 0.15
     medium:
       horizontal_flip: 0.5
       rotation: 10
@@ -58,7 +93,7 @@ augmentation:
       random_erasing: 0.1
   train:
     age: strong
-    gender: medium
+    gender: strong
     normalize:
       mean: [0.485, 0.456, 0.406]
       std: [0.229, 0.224, 0.225]
@@ -67,7 +102,6 @@ augmentation:
       mean: [0.485, 0.456, 0.406]
       std: [0.229, 0.224, 0.225]
 
-# Output Configuration
 output:
   models_dir: "/outputs/models"
   logs_dir: "/outputs/logs"

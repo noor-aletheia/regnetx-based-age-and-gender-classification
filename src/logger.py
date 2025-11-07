@@ -146,7 +146,7 @@ class TrainingLogger:
         
         for ax in axes.flat:
             phase_changes = df[df['phase'].diff() != 0]['epoch'].tolist()
-            for epoch in phase_changes[1:]:  # Skip first epoch
+            for epoch in phase_changes[1:]:
                 ax.axvline(x=epoch, color='red', linestyle='--', alpha=0.7, 
                           label='Phase Transition' if ax == axes[0, 0] else "")
         
@@ -274,7 +274,7 @@ class ModelSaver:
                 'args': dummy_input,
                 'f': onnx_path,
                 'export_params': True,
-                'opset_version': 13,
+                'opset_version': 18,
                 'do_constant_folding': True,
                 'input_names': ['input'],
                 'output_names': ['age_output', 'gender_output'],
@@ -293,20 +293,20 @@ class ModelSaver:
                     logger.info("Simplifying ONNX model...")
                     onnx_model_simplified, check_ok = onnxsim.simplify(
                         onnx_model,
-                        check_n=1,  # Reduced checks for stability
+                        check_n=1,
                         perform_optimization=True,
-                        skip_fuse_bn=True,  # Skip BN fusion for RegNetX stability
+                        skip_fuse_bn=True,
                         skip_constant_folding=False,
                         skip_shape_inference=False,
-                        input_shapes={'input': [1, 3, 224, 224]}  # Fixed input shape
+                        input_shapes={'input': [1, 3, 224, 224]}
                     )
                     
                     if check_ok:
                         onnx_simplified_path = os.path.join(self.models_dir, f'{model_name}_simplified.onnx')
                         onnx.save(onnx_model_simplified, onnx_simplified_path)
                         
-                        original_size = os.path.getsize(onnx_path) / (1024 * 1024)  # MB
-                        simplified_size = os.path.getsize(onnx_simplified_path) / (1024 * 1024)  # MB
+                        original_size = os.path.getsize(onnx_path) / (1024 * 1024)
+                        simplified_size = os.path.getsize(onnx_simplified_path) / (1024 * 1024)
                         size_reduction = ((original_size - simplified_size) / original_size) * 100
                         
                         logger.info(f"✅ ONNX model simplified successfully")
@@ -358,7 +358,7 @@ class ModelSaver:
                             data_file = onnx_file_path + '.data'
                             if os.path.exists(data_file):
                                 total_size += os.path.getsize(data_file)
-                            return total_size / (1024 * 1024)  # MB
+                            return total_size / (1024 * 1024)
                         
                         fp32_size = get_total_onnx_size(onnx_path)
                         fp16_size = get_total_onnx_size(onnx_fp16_path)
@@ -413,8 +413,6 @@ class ModelSaver:
                 logger.warning(f"Output count mismatch: PyTorch={len(pytorch_outputs_np)}, ONNX={len(onnx_outputs)}")
                 return {}
             
-            # Always use overall model similarity (individual similarity removed)
-            # Concatenate all outputs for overall model similarity
             pytorch_concat = np.concatenate([out.flatten() for out in pytorch_outputs_np])
             onnx_concat = np.concatenate([out.flatten() for out in onnx_outputs])
             
@@ -430,7 +428,7 @@ class ModelSaver:
             
             min_similarity = overall_similarity
             avg_similarity = overall_similarity
-            similarities = [overall_similarity, overall_similarity]  # For compatibility
+            similarities = [overall_similarity, overall_similarity]  
             
             logger.info(f"🔍 {model_name} Overall Verification:")
             logger.info(f"   Average Similarity: {avg_similarity:.6f}")

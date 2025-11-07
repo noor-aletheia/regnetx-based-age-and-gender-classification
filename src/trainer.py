@@ -8,7 +8,7 @@ from torch.cuda.amp import GradScaler, autocast
 import numpy as np
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix, classification_report
 import matplotlib
-matplotlib.use('Agg')  # Use non-interactive backend for Docker
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
 from typing import Dict, List, Tuple, Any, Optional
@@ -51,7 +51,7 @@ class EarlyStopping:
         Returns:
             True if training should stop, False otherwise
         """
-        val_loss = float(val_loss)  # Ensure float comparison
+        val_loss = float(val_loss)
         if val_loss < self.best_loss - self.min_delta:
             self.best_loss = val_loss
             self.counter = 0
@@ -98,12 +98,10 @@ class MetricsCalculator:
             y_true, y_pred, average='weighted', zero_division=0
         )
         
-        # Calculate per-class metrics
         precision_per_class, recall_per_class, f1_per_class, _ = precision_recall_fscore_support(
             y_true, y_pred, average=None, zero_division=0
         )
         
-        # Calculate confusion matrix
         cm = confusion_matrix(y_true, y_pred)
         
         metrics = {
@@ -114,7 +112,6 @@ class MetricsCalculator:
             'confusion_matrix': cm,
         }
         
-        # Add per-class metrics
         class_names = self.class_names[task]
         for i, class_name in enumerate(class_names):
             if i < len(precision_per_class):
@@ -138,10 +135,8 @@ class MetricsCalculator:
         """
         plt.figure(figsize=(10, 8))
         
-        # Normalize confusion matrix
         cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
         
-        # Create heatmap
         sns.heatmap(cm_normalized, 
                    annot=True, 
                    fmt='.3f', 
@@ -155,7 +150,6 @@ class MetricsCalculator:
         plt.ylabel('Actual')
         plt.tight_layout()
         
-        # Save plot
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.close()
@@ -203,25 +197,19 @@ class TwoPhaseTrainer:
         self.device = torch.device(config.get('hardware.device', 'cuda' if torch.cuda.is_available() else 'cpu'))
         self.mixed_precision = config.get('hardware.mixed_precision', True)
         
-        # Move model to device
         self.model.to(self.device)
         
-        # Initialize training components
         self.age_loss_fn, self.gender_loss_fn = create_loss_functions(
             config, self.device, age_class_weights, gender_class_weights
         )
         
-        # Initialize with Phase 1 parameters
         self.optimizer = create_optimizer(model, config)
         self.scheduler = create_scheduler(self.optimizer, config)
         
-        # Mixed precision scaler
         self.scaler = GradScaler() if self.mixed_precision else None
         
-        # Metrics calculator - initialize with placeholder, will be updated with actual class names
         self.metrics_calculator = None
         
-        # Training state
         self.current_phase = 1
         self.epoch = 0
         self.best_metrics = {
@@ -232,13 +220,11 @@ class TwoPhaseTrainer:
             'val_gender_f1': 0.0
         }
         
-        # Early stopping
         self.early_stopping = EarlyStopping(
             patience=int(config.get('training.phase1.patience', 3)),
             min_delta=0.001
         )
         
-        # Loss weights
         self.age_loss_weight = float(config.get('training.age_loss_weight', 1.0))
         self.gender_loss_weight = float(config.get('training.gender_loss_weight', 1.0))
         
@@ -264,23 +250,18 @@ class TwoPhaseTrainer:
         """Transition from Phase 1 to Phase 2"""
         logger.info("=== Transitioning to Phase 2 (Full Fine-tuning) ===")
         
-        # Unfreeze backbone
         self.model.unfreeze_backbone()
         
-        # Update phase
         self.current_phase = 2
         
-        # Create new optimizer with Phase 2 parameters
         self.optimizer = torch.optim.AdamW(
             self.model.get_trainable_parameters(),
             lr=float(self.config.get('training.phase2.learning_rate', 1e-4)),
             weight_decay=float(self.config.get('training.phase2.weight_decay', 1e-5))
         )
         
-        # Create new scheduler
         self.scheduler = create_scheduler(self.optimizer, self.config)
         
-        # Reset early stopping with Phase 2 patience
         self.early_stopping = EarlyStopping(
             patience=int(self.config.get('training.phase2.patience', 5)),
             min_delta=0.001
@@ -302,7 +283,6 @@ class TwoPhaseTrainer:
         age_labels = batch['age'].to(self.device)
         gender_labels = batch['gender'].to(self.device)
         
-        # Forward pass
         if self.mixed_precision:
             with autocast():
                 outputs = self.model(images)
@@ -338,7 +318,6 @@ class TwoPhaseTrainer:
             
             outputs, total_loss, age_loss, gender_loss = self._forward_pass(batch)
             
-            # Backward pass
             if self.mixed_precision:
                 self.scaler.scale(total_loss).backward()
                 self.scaler.step(self.optimizer)
@@ -347,13 +326,11 @@ class TwoPhaseTrainer:
                 total_loss.backward()
                 self.optimizer.step()
             
-            # Accumulate losses
             running_loss += total_loss.item()
             running_age_loss += age_loss.item()
             running_gender_loss += gender_loss.item()
             num_batches += 1
             
-            # Collect predictions for metrics
             age_pred = torch.argmax(outputs['age'], dim=1).cpu().numpy()
             gender_pred = torch.argmax(outputs['gender'], dim=1).cpu().numpy()
             
@@ -362,7 +339,6 @@ class TwoPhaseTrainer:
             age_targets.extend(batch['age'].cpu().numpy())
             gender_targets.extend(batch['gender'].cpu().numpy())
         
-        # Calculate metrics
         age_metrics = self.metrics_calculator.calculate_metrics(
             np.array(age_targets), np.array(age_predictions), 'age'
         )
@@ -398,13 +374,11 @@ class TwoPhaseTrainer:
             for batch in val_loader:
                 outputs, total_loss, age_loss, gender_loss = self._forward_pass(batch)
                 
-                # Accumulate losses
                 running_loss += total_loss.item()
                 running_age_loss += age_loss.item()
                 running_gender_loss += gender_loss.item()
                 num_batches += 1
                 
-                # Collect predictions for metrics
                 age_pred = torch.argmax(outputs['age'], dim=1).cpu().numpy()
                 gender_pred = torch.argmax(outputs['gender'], dim=1).cpu().numpy()
                 
@@ -413,7 +387,6 @@ class TwoPhaseTrainer:
                 age_targets.extend(batch['age'].cpu().numpy())
                 gender_targets.extend(batch['gender'].cpu().numpy())
         
-        # Calculate metrics
         age_metrics = self.metrics_calculator.calculate_metrics(
             np.array(age_targets), np.array(age_predictions), 'age'
         )
@@ -440,7 +413,7 @@ class TwoPhaseTrainer:
         if self.current_phase != 1:
             return False
             
-        # Transition if early stopping would trigger or we've reached max epochs for Phase 1
+
         max_phase1_epochs = int(self.config.get('training.phase1.epochs', 10))
         return (self.early_stopping.counter >= self.early_stopping.patience or 
                 self.epoch >= max_phase1_epochs)
@@ -468,7 +441,6 @@ class TwoPhaseTrainer:
         logger.info(f"Starting training for {self.model.model_name}")
         logger.info("=== Phase 1: Frozen Backbone Training ===")
         
-        # Freeze backbone for Phase 1
         self.model.freeze_backbone()
         
         history = {
@@ -494,16 +466,12 @@ class TwoPhaseTrainer:
         for epoch in range(max_epochs):
             self.epoch = epoch
             
-            # Train epoch
             train_metrics = self._train_epoch(train_loader)
             
-            # Validate epoch
             val_metrics = self._validate_epoch(val_loader)
             
-            # Combine metrics
             epoch_metrics = {**train_metrics, **val_metrics}
             
-            # Update history
             history['epoch'].append(epoch)
             history['phase'].append(self.current_phase)
             for key, value in epoch_metrics.items():
@@ -511,33 +479,27 @@ class TwoPhaseTrainer:
                     history[key].append(value)
             history['learning_rate'].append(self.optimizer.param_groups[0]['lr'])
             
-            # Log progress
             self._log_epoch_progress(epoch, epoch_metrics)
             
-            # Update learning rate scheduler
             if self.scheduler is not None:
                 if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
                     self.scheduler.step(val_metrics['val_loss'])
                 else:
                     self.scheduler.step()
             
-            # Check if we should transition to Phase 2
             if self._should_transition_to_phase2(val_metrics):
                 if self.current_phase == 1:
                     self._transition_to_phase2()
-                    # Reset early stopping for Phase 2
                     self.early_stopping = EarlyStopping(
                         patience=int(self.config.get('training.phase2.patience', 5)),
                         min_delta=0.001
                     )
                     continue
             
-            # Early stopping check
             if self.early_stopping(val_metrics['val_loss'], self.model):
                 logger.info(f"Early stopping triggered at epoch {epoch}")
                 break
             
-            # Update best metrics
             if self._update_best_metrics(val_metrics):
                 logger.info("New best model found!")
         
@@ -583,7 +545,6 @@ class TwoPhaseTrainer:
             for batch in test_loader:
                 outputs, _, _, _ = self._forward_pass(batch)
                 
-                # Collect predictions
                 age_pred = torch.argmax(outputs['age'], dim=1).cpu().numpy()
                 gender_pred = torch.argmax(outputs['gender'], dim=1).cpu().numpy()
                 
@@ -592,13 +553,11 @@ class TwoPhaseTrainer:
                 age_targets.extend(batch['age'].cpu().numpy())
                 gender_targets.extend(batch['gender'].cpu().numpy())
         
-        # Convert to numpy arrays
         age_targets = np.array(age_targets)
         age_predictions = np.array(age_predictions)
         gender_targets = np.array(gender_targets)
         gender_predictions = np.array(gender_predictions)
         
-        # Calculate metrics
         age_metrics = self.metrics_calculator.calculate_metrics(
             age_targets, age_predictions, 'age'
         )
@@ -606,23 +565,18 @@ class TwoPhaseTrainer:
             gender_targets, gender_predictions, 'gender'
         )
         
-        # Get class names
         age_class_names = self.metrics_calculator.class_names['age']
         gender_class_names = self.metrics_calculator.class_names['gender']
         
-        # Print detailed classification reports
         self.metrics_calculator.print_classification_report(
             age_targets, age_predictions, age_class_names, 'age'
         )
         self.metrics_calculator.print_classification_report(
             gender_targets, gender_predictions, gender_class_names, 'gender'
         )
-        
-        # Save confusion matrices if requested
         if save_confusion_matrix:
             output_dir = self.config.get('output.logs_dir', './outputs/logs')
             
-            # Save age confusion matrix
             age_cm_path = os.path.join(output_dir, 'confusion_matrix_age.png')
             self.metrics_calculator.save_confusion_matrix(
                 age_metrics['confusion_matrix'], 
@@ -632,7 +586,6 @@ class TwoPhaseTrainer:
                 f'Age Classification Confusion Matrix (Acc: {age_metrics["accuracy"]:.3f})'
             )
             
-            # Save gender confusion matrix
             gender_cm_path = os.path.join(output_dir, 'confusion_matrix_gender.png')
             self.metrics_calculator.save_confusion_matrix(
                 gender_metrics['confusion_matrix'], 
