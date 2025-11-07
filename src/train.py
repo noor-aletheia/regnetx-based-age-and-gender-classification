@@ -1,6 +1,3 @@
-"""
-Main training script for RegNetX age and gender classification
-"""
 import os
 import sys
 import torch
@@ -9,7 +6,6 @@ import time
 from datetime import datetime
 from typing import Dict, Any
 
-# Add src to Python path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from config import Config
@@ -17,8 +13,6 @@ from dataset import DataProcessor
 from models import ModelFactory
 from trainer import TwoPhaseTrainer
 from logger import TrainingLogger, ModelSaver, ResultsAggregator
-
-# Set up logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -32,11 +26,9 @@ logger = logging.getLogger(__name__)
 
 def setup_environment():
     """Setup training environment"""
-    # Set random seeds for reproducibility
     torch.manual_seed(42)
     torch.cuda.manual_seed_all(42)
     
-    # Check CUDA availability
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logger.info(f"Using device: {device}")
     
@@ -67,17 +59,13 @@ def train_single_model(model_name: str, config: Config, data_processor: DataProc
     
     start_time = time.time()
     
-    # Create model
     model = ModelFactory.create_model(config, model_name)
     ModelFactory.print_model_summary(model)
     
-    # Get data loaders
     train_loader, val_loader, test_loader = data_processor.get_dataloaders()
     
-    # Get class weights for handling imbalance
     age_class_weights, gender_class_weights = data_processor.get_class_weights()
     
-    # Initialize trainer
     trainer = TwoPhaseTrainer(
         model=model,
         config=config,
@@ -85,17 +73,14 @@ def train_single_model(model_name: str, config: Config, data_processor: DataProc
         gender_class_weights=gender_class_weights
     )
     
-    # Initialize metrics calculator with actual class names
     age_class_names, gender_class_names = data_processor.get_class_names()
     trainer.initialize_metrics_calculator(age_class_names, gender_class_names)
     
-    # Initialize logger and saver
     experiment_name = config.get('experiment_name', None)
     training_logger = TrainingLogger(config, model_name, experiment_name=experiment_name)
     model_saver = ModelSaver(config)
     
     try:
-        # Train model
         logger.info("Starting training...")
         import traceback
         try:
@@ -106,7 +91,6 @@ def train_single_model(model_name: str, config: Config, data_processor: DataProc
             logger.error(f"Traceback: {traceback.format_exc()}")
             raise
         
-        # Log training history
         for i, epoch_data in enumerate(history['epoch']):
             epoch_metrics = {}
             for key in history:
@@ -119,14 +103,11 @@ def train_single_model(model_name: str, config: Config, data_processor: DataProc
                 phase=history['phase'][i]
             )
         
-        # Evaluate on test set
         logger.info("Evaluating on test set...")
         test_results = trainer.evaluate(test_loader)
         
-        # Log test results
         training_logger.log_test_results(test_results)
         
-        # Save best model
         best_metrics = {
             'val_loss': trainer.best_metrics['val_loss'],
             'val_age_accuracy': trainer.best_metrics['val_age_accuracy'],
@@ -141,29 +122,81 @@ def train_single_model(model_name: str, config: Config, data_processor: DataProc
         
         model_path = model_saver.save_best_model(model, best_metrics, model_name)
         
-        # Export to ONNX
+        cosine_similarity_results = {}
         if config.get('logging.export_onnx', True):
-            model_saver.export_to_onnx(model, model_name)
+            cosine_similarity_results = model_saver.export_to_onnx(model, model_name)
         
-        # Calculate training time
         training_time = time.time() - start_time
         
-        # Add to results aggregator
+        training_config = {
+            'phase1_epochs': config.get('training.phase1.epochs', 0),
+            'phase2_epochs': config.get('training.phase2.epochs', 0),
+            'augmentation_preset': f"age:{config.get('augmentation.train.age', 'unknown')}, gender:{config.get('augmentation.train.gender', 'unknown')}",
+            'phase1_lr': config.get('training.phase1.learning_rate', 0),
+            'phase2_lr': config.get('training.phase2.learning_rate', 0),
+            'phase1_wd': config.get('training.phase1.weight_decay', 0),
+            'phase2_wd': config.get('training.phase2.weight_decay', 0),
+            'scheduler': config.get('training.scheduler', 'unknown'),
+            'class_weight_alpha': config.get('training.class_weight_power_alpha', 1.0),
+            'loss_type': config.get('training.loss_type', 'unknown'),
+            'batch_size': config.get('dataset.batch_size', 0),
+            'age_class_scheme': config.get('dataset.age_class_scheme', '8-class')
+        }
+        
+        dataset_sizes = {
+            'train': len(train_loader.dataset),
+            'val': len(val_loader.dataset),
+            'test': len(test_loader.dataset)
+        }
+        
+        try:
+            from ptflops import get_model_complexity_info
+            dummy_input = torch.randn(1, 3, 224, 224)
+            gflops, _ = get_model_complexity_info(model, (3, 224, 224), print_per_layer_stat=False, verbose=False)
+            gflops = float(gflops.split(' ')[0]) if isinstance(gflops, str) else gflops
+        except:
+            gflops = 0.0
+            
+        try:
+            model.eval()
+            dummy_input = torch.randn(1, 3, 224, 224).to(model.device if hasattr(model, 'device') else 'cpu')
+            start_fps = time.time()
+            with torch.no_grad():
+                for _ in range(100):
+                    _ = model(dummy_input)
+            fps = 100.0 / (time.time() - start_fps)
+        except:
+            fps = 0.0
+
         model_info = ModelFactory.get_model_info(model)
         results_aggregator.add_model_results(
             model_name=model_name,
             test_results=test_results,
             training_time=training_time,
-            model_info=model_info
+            model_info=model_info,
+            training_config=training_config,
+            dataset_sizes=dataset_sizes,
+            gflops=gflops,
+            fps=fps,
+            cosine_similarity_results=cosine_similarity_results
         )
         
-        # Close logger
         training_logger.close()
         
         logger.info(f"✅ Model {model_name} training completed successfully!")
         logger.info(f"   Training time: {training_time:.1f}s")
         logger.info(f"   Test Age Accuracy: {test_results['age_metrics']['accuracy']:.4f}")
         logger.info(f"   Test Gender Accuracy: {test_results['gender_metrics']['accuracy']:.4f}")
+        
+        if cosine_similarity_results:
+            logger.info(f"   ONNX Verification Results:")
+            logger.info(f"     Average Cosine Similarity: {cosine_similarity_results.get('average_cosine_similarity', 0):.6f}")
+            logger.info(f"     Age Output Similarity: {cosine_similarity_results.get('age_output_similarity', 0):.6f}")
+            logger.info(f"     Gender Output Similarity: {cosine_similarity_results.get('gender_output_similarity', 0):.6f}")
+            if cosine_similarity_results.get('verification_passed', False):
+                logger.info(f"     ✅ ONNX verification PASSED")
+            else:
+                logger.info(f"     ⚠️ ONNX verification FAILED")
         
         return {
             'model_name': model_name,
@@ -189,25 +222,18 @@ def main():
     logger.info(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
     try:
-        # Setup environment
         device = setup_environment()
-        # Load configuration
         config = Config('config.yaml')
         config.create_directories()
-        # Log configuration
         logger.info("Configuration loaded:")
         logger.info(f"  Dataset path: {config.get('dataset.path')}")
         logger.info(f"  Batch size: {config.get('dataset.batch_size')}")
         logger.info(f"  Models to train: {config.get('models.variants')}")
         logger.info(f"  Mixed precision: {config.get('hardware.mixed_precision')}")
-        # Initialize data processor
         logger.info("Loading and processing dataset...")
         data_processor = DataProcessor(config)
-        # Initialize results aggregator
         results_aggregator = ResultsAggregator(config)
-        # Get model variants to train
         model_variants = config.get('models.variants', ['mobilenetv3_small_075'])
-        # Train each model sequentially
         all_results = []
         successful_models = 0
         total_training_time = 0
@@ -224,10 +250,8 @@ def main():
                 total_training_time += result['training_time']
             else:
                 logger.error(f"Failed to train {model_name}: {result.get('error', 'Unknown error')}")
-        # Save comparison results
         if successful_models > 0:
             results_aggregator.save_comparison_table()
-        # Final summary
         logger.info(f"\n{'='*60}")
         logger.info("TRAINING COMPLETED")
         logger.info(f"{'='*60}")
@@ -238,7 +262,6 @@ def main():
             sys.exit(1)
         else:
             logger.info("✅ Training pipeline completed successfully!")
-            # Show best model
             if results_aggregator.results:
                 best_result = max(results_aggregator.results, 
                                 key=lambda x: x['age_f1'] + x['gender_f1'])

@@ -14,9 +14,13 @@ RUN apt-get update && apt-get install -y \
     && pip install tensorboard \
     && mkdir -p /outputs/models /outputs/logs /outputs/tensorboard
 
+
 # Copy source code
 COPY src/ ./src/
 COPY config.yaml .
+COPY train_cli.py .
+COPY train_cli.sh .
+
 
 # Set environment variables
 ENV PYTHONPATH=/app/src:$PYTHONPATH

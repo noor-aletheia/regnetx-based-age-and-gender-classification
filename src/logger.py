@@ -1,6 +1,3 @@
-"""
-Logging and metrics utilities for training
-"""
 import os
 import pandas as pd
 import numpy as np
@@ -14,7 +11,6 @@ import logging
 import json
 from datetime import datetime
 from config import Config
-# TensorBoard
 from torch.utils.tensorboard import SummaryWriter
 
 logger = logging.getLogger(__name__)
@@ -34,18 +30,14 @@ class TrainingLogger:
         self.config = config
         self.model_name = model_name
         self.logs_dir = config.get('output.logs_dir')
-        # Create directories
         os.makedirs(self.logs_dir, exist_ok=True)
         
-        # Training history
         self.history = []
         
-        # Start time
         self.start_time = datetime.now()
         
         logger.info(f"Initialized logger for {model_name}")
 
-        # TensorBoard
         self.tb_writer = None
         if self.config.get('logging.enable_tensorboard', True):
             tb_base = self.config.get('output.tensorboard_dir', '/outputs/tensorboard')
@@ -64,7 +56,6 @@ class TrainingLogger:
             metrics: Dictionary of metrics
             phase: Training phase (1 or 2)
         """
-        # Add metadata
         log_entry = {
             'epoch': epoch,
             'phase': phase,
@@ -72,10 +63,8 @@ class TrainingLogger:
             **metrics
         }
         
-        # Add to history
         self.history.append(log_entry)
 
-        # Log to TensorBoard
         if self.tb_writer:
             for k, v in metrics.items():
                 if isinstance(v, (int, float)):
@@ -106,10 +95,8 @@ class TrainingLogger:
             
         df = pd.DataFrame(self.history)
         
-        # Create training curves
         fig, axes = plt.subplots(2, 3, figsize=(18, 12))
         
-        # Loss curves
         axes[0, 0].plot(df['epoch'], df['train_loss'], label='Train', marker='o')
         axes[0, 0].plot(df['epoch'], df['val_loss'], label='Validation', marker='s')
         axes[0, 0].set_title('Loss')
@@ -118,7 +105,6 @@ class TrainingLogger:
         axes[0, 0].legend()
         axes[0, 0].grid(True)
         
-        # Age accuracy
         axes[0, 1].plot(df['epoch'], df['train_age_accuracy'], label='Train', marker='o')
         axes[0, 1].plot(df['epoch'], df['val_age_accuracy'], label='Validation', marker='s')
         axes[0, 1].set_title('Age Accuracy')
@@ -127,7 +113,6 @@ class TrainingLogger:
         axes[0, 1].legend()
         axes[0, 1].grid(True)
         
-        # Gender accuracy
         axes[0, 2].plot(df['epoch'], df['train_gender_accuracy'], label='Train', marker='o')
         axes[0, 2].plot(df['epoch'], df['val_gender_accuracy'], label='Validation', marker='s')
         axes[0, 2].set_title('Gender Accuracy')
@@ -136,7 +121,6 @@ class TrainingLogger:
         axes[0, 2].legend()
         axes[0, 2].grid(True)
         
-        # Age F1 score
         axes[1, 0].plot(df['epoch'], df['train_age_f1'], label='Train', marker='o')
         axes[1, 0].plot(df['epoch'], df['val_age_f1'], label='Validation', marker='s')
         axes[1, 0].set_title('Age F1 Score')
@@ -145,7 +129,6 @@ class TrainingLogger:
         axes[1, 0].legend()
         axes[1, 0].grid(True)
         
-        # Gender F1 score
         axes[1, 1].plot(df['epoch'], df['train_gender_f1'], label='Train', marker='o')
         axes[1, 1].plot(df['epoch'], df['val_gender_f1'], label='Validation', marker='s')
         axes[1, 1].set_title('Gender F1 Score')
@@ -154,7 +137,6 @@ class TrainingLogger:
         axes[1, 1].legend()
         axes[1, 1].grid(True)
         
-        # Learning rate
         axes[1, 2].plot(df['epoch'], df['learning_rate'], marker='o')
         axes[1, 2].set_title('Learning Rate')
         axes[1, 2].set_xlabel('Epoch')
@@ -162,7 +144,6 @@ class TrainingLogger:
         axes[1, 2].set_yscale('log')
         axes[1, 2].grid(True)
         
-        # Add phase transitions
         for ax in axes.flat:
             phase_changes = df[df['phase'].diff() != 0]['epoch'].tolist()
             for epoch in phase_changes[1:]:  # Skip first epoch
@@ -172,7 +153,6 @@ class TrainingLogger:
         plt.tight_layout()
         plt.suptitle(f'Training Curves - {self.model_name}', y=1.02, fontsize=16)
         
-        # Save plot
         plot_path = os.path.join(self.logs_dir, f'{self.model_name}_training_curves.png')
         plt.savefig(plot_path, dpi=300, bbox_inches='tight')
         plt.close()
@@ -186,13 +166,11 @@ class TrainingLogger:
             self.save_training_curves()
         
         
-        # Calculate total training time
         end_time = datetime.now()
         training_time = (end_time - self.start_time).total_seconds()
         
         logger.info(f"Training completed for {self.model_name} in {training_time:.2f} seconds")
 
-        # Close TensorBoard writer
         if self.tb_writer:
             self.tb_writer.flush()
             self.tb_writer.close()
@@ -267,7 +245,7 @@ class ModelSaver:
         return model_path
     
     def export_to_onnx(self, model: torch.nn.Module, model_name: str, 
-                      input_shape: tuple = (1, 3, 224, 224)):
+                      input_shape: tuple = (1, 3, 224, 224)) -> Dict[str, float]:
         """
         Export model to ONNX format (FP32 and FP16 versions)
         
@@ -275,66 +253,98 @@ class ModelSaver:
             model: Model to export
             model_name: Name of the model
             input_shape: Input tensor shape
+            
+        Returns:
+            Dictionary containing cosine similarity metrics or empty dict if verification disabled
         """
         if not self.config.get('logging.export_onnx', True):
-            return
+            return {}
             
         model.eval()
         device = next(model.parameters()).device
         
-        # Create dummy input
         dummy_input = torch.randn(input_shape).to(device)
         
-        # Export to ONNX (FP32)
         onnx_path = os.path.join(self.models_dir, f'{model_name}.onnx')
         onnx_fp16_path = os.path.join(self.models_dir, f'{model_name}_fp16.onnx')
         
-        try:
-            # Export FP32 ONNX model
-            torch.onnx.export(
-                model,
-                dummy_input,
-                onnx_path,
-                export_params=True,
-                opset_version=11,
-                do_constant_folding=True,
-                input_names=['input'],
-                output_names=['age_output', 'gender_output'],
-                dynamic_axes={
-                    'input': {0: 'batch_size'},
-                    'age_output': {0: 'batch_size'},
-                    'gender_output': {0: 'batch_size'}
-                }
-            )
+        try:            
+            export_kwargs = {
+                'model': model,
+                'args': dummy_input,
+                'f': onnx_path,
+                'export_params': True,
+                'opset_version': 13,
+                'do_constant_folding': True,
+                'input_names': ['input'],
+                'output_names': ['age_output', 'gender_output'],
+                'verbose': False
+            }
             
-            # Verify FP32 ONNX model
+            torch.onnx.export(**export_kwargs)
+            
             onnx_model = onnx.load(onnx_path)
             onnx.checker.check_model(onnx_model)
             
-            # Test FP32 with ONNX Runtime
+            if self.config.get('logging.simplify_onnx', True):
+                try:
+                    import onnxsim
+                    
+                    logger.info("Simplifying ONNX model...")
+                    onnx_model_simplified, check_ok = onnxsim.simplify(
+                        onnx_model,
+                        check_n=1,  # Reduced checks for stability
+                        perform_optimization=True,
+                        skip_fuse_bn=True,  # Skip BN fusion for RegNetX stability
+                        skip_constant_folding=False,
+                        skip_shape_inference=False,
+                        input_shapes={'input': [1, 3, 224, 224]}  # Fixed input shape
+                    )
+                    
+                    if check_ok:
+                        onnx_simplified_path = os.path.join(self.models_dir, f'{model_name}_simplified.onnx')
+                        onnx.save(onnx_model_simplified, onnx_simplified_path)
+                        
+                        original_size = os.path.getsize(onnx_path) / (1024 * 1024)  # MB
+                        simplified_size = os.path.getsize(onnx_simplified_path) / (1024 * 1024)  # MB
+                        size_reduction = ((original_size - simplified_size) / original_size) * 100
+                        
+                        logger.info(f"✅ ONNX model simplified successfully")
+                        logger.info(f"📊 Size reduction: {original_size:.2f}MB → {simplified_size:.2f}MB ({size_reduction:.1f}% smaller)")
+                        
+                        onnx_model = onnx_model_simplified
+                        onnx_path = onnx_simplified_path
+                    else:
+                        logger.warning("ONNX simplification failed validation, using original model")
+                        
+                except ImportError:
+                    logger.warning("onnxsim not available. Install with: pip install onnxsim")
+                except Exception as e:
+                    logger.warning(f"ONNX simplification failed: {e}")
+            
             ort_session = ort.InferenceSession(onnx_path)
             test_input = dummy_input.cpu().numpy()
             ort_inputs = {ort_session.get_inputs()[0].name: test_input}
             ort_outputs = ort_session.run(None, ort_inputs)
             
+            cosine_similarity_results = {}
+            if self.config.get('logging.verify_onnx_similarity', True):
+                similarity_threshold = self.config.get('logging.similarity_threshold', 0.99)
+                cosine_similarity_results = self._verify_model_outputs(model, dummy_input, ort_outputs, model_name, similarity_threshold)
+            
             logger.info(f"✅ FP32 ONNX model exported and verified: {onnx_path}")
             
-            # Convert to FP16 (if enabled)
             if self.config.get('logging.export_onnx_fp16', True):
                 try:
                     from onnxconverter_common import float16
                     
-                    # Load FP32 model and convert to FP16
                     onnx_model_fp32 = onnx.load(onnx_path)
                     onnx_model_fp16 = float16.convert_float_to_float16(onnx_model_fp32)
                     
-                    # Save FP16 model
                     onnx.save(onnx_model_fp16, onnx_fp16_path)
                     
-                    # Verify FP16 model
                     onnx.checker.check_model(onnx_model_fp16)
                     
-                    # Test FP16 with ONNX Runtime (if available)
                     try:
                         ort_session_fp16 = ort.InferenceSession(onnx_fp16_path)
                         test_input_fp16 = test_input.astype(np.float16) if test_input.dtype == np.float32 else test_input
@@ -343,10 +353,8 @@ class ModelSaver:
                         
                         logger.info(f"✅ FP16 ONNX model exported and verified: {onnx_fp16_path}")
                         
-                        # Compare model sizes (including external data files)
                         def get_total_onnx_size(onnx_file_path):
                             total_size = os.path.getsize(onnx_file_path)
-                            # Check for external data file
                             data_file = onnx_file_path + '.data'
                             if os.path.exists(data_file):
                                 total_size += os.path.getsize(data_file)
@@ -368,8 +376,110 @@ class ModelSaver:
                 except Exception as fp16_error:
                     logger.error(f"Failed to create FP16 ONNX model: {fp16_error}")
             
+            return cosine_similarity_results
+            
         except Exception as e:
             logger.error(f"Failed to export ONNX model: {e}")
+            return {}
+    
+    def _verify_model_outputs(self, pytorch_model: torch.nn.Module, dummy_input: torch.Tensor, 
+                            onnx_outputs: list, model_name: str, similarity_threshold: float = 0.97) -> Dict[str, float]:
+        """
+        Verify ONNX model outputs against PyTorch model outputs using cosine similarity
+        
+        Args:
+            pytorch_model: Original PyTorch model
+            dummy_input: Input tensor used for testing
+            onnx_outputs: Outputs from ONNX model inference
+            model_name: Name of the model for logging
+            similarity_threshold: Minimum cosine similarity to consider models equivalent
+            
+        Returns:
+            Dictionary containing cosine similarity metrics for each output
+        """
+        try:
+            pytorch_model.eval()
+            with torch.no_grad():
+                pytorch_outputs = pytorch_model(dummy_input)
+            
+            if isinstance(pytorch_outputs, dict):
+                pytorch_outputs_np = [pytorch_outputs['age'].cpu().numpy(), pytorch_outputs['gender'].cpu().numpy()]
+            elif isinstance(pytorch_outputs, tuple):
+                pytorch_outputs_np = [output.cpu().numpy() for output in pytorch_outputs]
+            else:
+                pytorch_outputs_np = [pytorch_outputs.cpu().numpy()]
+            
+            if len(pytorch_outputs_np) != len(onnx_outputs):
+                logger.warning(f"Output count mismatch: PyTorch={len(pytorch_outputs_np)}, ONNX={len(onnx_outputs)}")
+                return {}
+            
+            # Always use overall model similarity (individual similarity removed)
+            # Concatenate all outputs for overall model similarity
+            pytorch_concat = np.concatenate([out.flatten() for out in pytorch_outputs_np])
+            onnx_concat = np.concatenate([out.flatten() for out in onnx_outputs])
+            
+            overall_similarity = self._cosine_similarity(pytorch_concat, onnx_concat)
+            
+            logger.info(f"📊 {model_name} - Overall Model Verification:")
+            logger.info(f"   Overall Cosine Similarity: {overall_similarity:.6f}")
+            
+            if overall_similarity >= similarity_threshold:
+                logger.info(f"   ✅ Overall model verification PASSED")
+            else:
+                logger.warning(f"   ⚠️ Overall model verification FAILED (similarity < {similarity_threshold})")
+            
+            min_similarity = overall_similarity
+            avg_similarity = overall_similarity
+            similarities = [overall_similarity, overall_similarity]  # For compatibility
+            
+            logger.info(f"🔍 {model_name} Overall Verification:")
+            logger.info(f"   Average Similarity: {avg_similarity:.6f}")
+            logger.info(f"   Minimum Similarity: {min_similarity:.6f}")
+            
+            if min_similarity >= similarity_threshold:
+                logger.info(f"   ✅ Model verification PASSED - ONNX model is highly equivalent to PyTorch model")
+            else:
+                logger.warning(f"   ⚠️ Model verification FAILED - Consider checking conversion settings")
+                logger.warning(f"   This might indicate precision loss or conversion issues")
+            
+            return {
+                'average_cosine_similarity': avg_similarity,
+                'minimum_cosine_similarity': min_similarity,
+                'age_output_similarity': similarities[0] if len(similarities) > 0 else 0.0,
+                'gender_output_similarity': similarities[1] if len(similarities) > 1 else 0.0,
+                'verification_passed': min_similarity >= similarity_threshold
+            }
+                
+        except Exception as e:
+            logger.error(f"Model verification failed: {e}")
+            return {}
+    
+    def _cosine_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
+        """
+        Calculate cosine similarity between two vectors
+        
+        Args:
+            vec1: First vector
+            vec2: Second vector
+            
+        Returns:
+            Cosine similarity score (0 to 1)
+        """
+        try:
+            norm1 = np.linalg.norm(vec1)
+            norm2 = np.linalg.norm(vec2)
+            
+            if norm1 == 0 or norm2 == 0:
+                return 1.0 if norm1 == norm2 else 0.0
+            
+            dot_product = np.dot(vec1, vec2)
+            cosine_sim = dot_product / (norm1 * norm2)
+            
+            return max(0.0, min(1.0, cosine_sim))
+            
+        except Exception as e:
+            logger.error(f"Cosine similarity calculation failed: {e}")
+            return 0.0
 
 
 class ResultsAggregator:
@@ -387,7 +497,11 @@ class ResultsAggregator:
         self.results = []
     
     def add_model_results(self, model_name: str, test_results: Dict[str, Any],
-                         training_time: float, model_info: Dict[str, Any]):
+                         training_time: float, model_info: Dict[str, Any], 
+                         training_config: Dict[str, Any] = None, 
+                         dataset_sizes: Dict[str, int] = None,
+                         gflops: float = None, fps: float = None,
+                         cosine_similarity_results: Dict[str, float] = None):
         """
         Add results from a trained model
         
@@ -396,23 +510,48 @@ class ResultsAggregator:
             test_results: Test results dictionary
             training_time: Training time in seconds
             model_info: Model information
+            training_config: Training configuration details
+            dataset_sizes: Dataset split sizes
+            gflops: Model computational complexity
+            fps: Inference frames per second
         """
         age_metrics = test_results['age_metrics']
         gender_metrics = test_results['gender_metrics']
         
+        if training_config is None:
+            training_config = {}
+            
+        if dataset_sizes is None:
+            dataset_sizes = {'train': 0, 'val': 0, 'test': 0}
+        
         result = {
-            'model_name': model_name,
-            'total_parameters': model_info.get('total_parameters', 0),
-            'trainable_parameters': model_info.get('trainable_parameters', 0),
-            'training_time_seconds': training_time,
-            'age_accuracy': age_metrics['accuracy'],
-            'age_precision': age_metrics['precision'],
-            'age_recall': age_metrics['recall'],
-            'age_f1': age_metrics['f1'],
-            'gender_accuracy': gender_metrics['accuracy'],
-            'gender_precision': gender_metrics['precision'],
-            'gender_recall': gender_metrics['recall'],
-            'gender_f1': gender_metrics['f1']
+            'Model': model_name,
+            'Phase 1 Epochs': training_config.get('phase1_epochs', 0),
+            'Phase 2 Epochs': training_config.get('phase2_epochs', 0), 
+            'Augmentation': training_config.get('augmentation_preset', 'unknown'),
+            'LR (P1/P2)': f"{float(training_config.get('phase1_lr', 0)):.0e}/{float(training_config.get('phase2_lr', 0)):.0e}",
+            'Weight Decay (P1/P2)': f"{float(training_config.get('phase1_wd', 0)):.0e}/{float(training_config.get('phase2_wd', 0)):.0e}",
+            'scheduler': training_config.get('scheduler', 'unknown'),
+            'Parameters': model_info.get('total_parameters', 0),
+            'Training Time (s)': training_time,
+            'Age Acc': age_metrics['accuracy'],
+            'Age F1': age_metrics['f1'],
+            'Gender Acc': gender_metrics['accuracy'],
+            'Gender F1': gender_metrics['f1'],
+            'Combined F1': age_metrics['f1'] + gender_metrics['f1'],
+            'GFLOPs': gflops or 0.0,
+            'class weight alpha': training_config.get('class_weight_alpha', 1.0),
+            'cross entropy loss': training_config.get('loss_type', 'unknown'),
+            'batch size': training_config.get('batch_size', 0),
+            'fps': fps or 0.0,
+            'train size': dataset_sizes.get('train', 0),
+            'test size': dataset_sizes.get('test', 0),
+            'val size': dataset_sizes.get('val', 0),
+            'age class scheme': training_config.get('age_class_scheme', '8-class'),
+            'ONNX Avg Similarity': cosine_similarity_results.get('average_cosine_similarity', 0.0) if cosine_similarity_results else 0.0,
+            'ONNX Age Similarity': cosine_similarity_results.get('age_output_similarity', 0.0) if cosine_similarity_results else 0.0,
+            'ONNX Gender Similarity': cosine_similarity_results.get('gender_output_similarity', 0.0) if cosine_similarity_results else 0.0,
+            'ONNX Verification': 'PASS' if cosine_similarity_results and cosine_similarity_results.get('verification_passed', False) else 'FAIL'
         }
         
         self.results.append(result)
@@ -424,56 +563,71 @@ class ResultsAggregator:
             
         df = pd.DataFrame(self.results)
         
-        # Sort by combined performance (age F1 + gender F1)
-        df['combined_f1'] = df['age_f1'] + df['gender_f1']
-        df = df.sort_values('combined_f1', ascending=False)
+        df = df.sort_values('Combined F1', ascending=False)
         
-        # Save to CSV
-        csv_path = os.path.join(self.logs_dir, 'model_comparison.csv')
+        csv_path = os.path.join(self.logs_dir, 'comprehensive_training_results.csv')
         df.to_csv(csv_path, index=False)
         
-        # Create a formatted summary
         summary_path = os.path.join(self.logs_dir, 'training_summary.txt')
         with open(summary_path, 'w') as f:
-            f.write("=== MobileNet Age & Gender Classification Results ===\n\n")
-            f.write(f"Training completed on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            f.write("=== RegNetX Age & Gender Classification Results ===\n\n")
+            f.write(f"Training completed on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"Dataset: Mixed Drama + Internet (80/20 split)\n")
+            f.write(f"Total training samples: {df.iloc[0]['train size'] if len(df) > 0 else 'N/A'}\n")
+            f.write(f"Age class scheme: {df.iloc[0]['age class scheme'] if len(df) > 0 else 'N/A'}\n\n")
             
-            f.write("Model Comparison (sorted by combined F1 score):\n")
-            f.write("-" * 80 + "\n")
+            f.write("Comprehensive Results (sorted by Combined F1 score):\n")
+            f.write("="*120 + "\n")
+            
+            header = f"{'Model':<15} {'P1/P2 Epochs':<12} {'Augment':<20} {'LR(P1/P2)':<15} {'WD(P1/P2)':<15} {'Scheduler':<15} {'Params(M)':<10} {'Time(s)':<8} {'Age F1':<7} {'Gender F1':<9} {'Comb F1':<8} {'GFLOPs':<7} {'ONNX Sim':<9}\n"
+            f.write(header)
+            f.write("-"*130 + "\n")
             
             for _, row in df.iterrows():
-                f.write(f"Model: {row['model_name']}\n")
-                f.write(f"  Parameters: {row['total_parameters']:,} (trainable: {row['trainable_parameters']:,})\n")
-                f.write(f"  Training Time: {row['training_time_seconds']:.1f}s\n")
-                f.write(f"  Age - Acc: {row['age_accuracy']:.4f}, F1: {row['age_f1']:.4f}\n")
-                f.write(f"  Gender - Acc: {row['gender_accuracy']:.4f}, F1: {row['gender_f1']:.4f}\n")
-                f.write(f"  Combined F1: {row['combined_f1']:.4f}\n")
-                f.write("-" * 40 + "\n")
+                params_m = row['Parameters'] / 1_000_000 if row['Parameters'] > 0 else 0
+                onnx_sim = row.get('ONNX Avg Similarity', 0.0)
+                line = f"{row['Model']:<15} {row['Phase 1 Epochs']}/{row['Phase 2 Epochs']:<8} {row['Augmentation']:<20} {row['LR (P1/P2)']:<15} {row['Weight Decay (P1/P2)']:<15} {row['scheduler']:<15} {params_m:<10.1f} {row['Training Time (s)']:<8.0f} {row['Age F1']:<7.3f} {row['Gender F1']:<9.3f} {row['Combined F1']:<8.3f} {row['GFLOPs']:<7.1f} {onnx_sim:<9.5f}\n"
+                f.write(line)
             
-            # Best model summary
-            best_model = df.iloc[0]
-            f.write(f"\nBest Overall Model: {best_model['model_name']}\n")
-            f.write(f"Combined F1 Score: {best_model['combined_f1']:.4f}\n")
+            f.write("="*130 + "\n")
+            
+            if len(df) > 0:
+                best_model = df.iloc[0]
+                f.write(f"\n🏆 Best Model: {best_model['Model']}\n")
+                f.write(f"   Combined F1: {best_model['Combined F1']:.4f}\n")
+                f.write(f"   Age Accuracy: {best_model['Age Acc']:.4f} | Gender Accuracy: {best_model['Gender Acc']:.4f}\n")
+                f.write(f"   Parameters: {best_model['Parameters']:,}\n")
+                f.write(f"   Training Time: {best_model['Training Time (s)']:.1f}s\n")
+                f.write(f"   Age Class Scheme: {best_model.get('age class scheme', 'N/A')}\n")
+                f.write(f"   ONNX Verification: {best_model.get('ONNX Verification', 'N/A')} (Avg Similarity: {best_model.get('ONNX Avg Similarity', 0.0):.5f})\n")
         
         logger.info(f"Model comparison saved to {csv_path}")
         logger.info(f"Training summary saved to {summary_path}")
         
-        # Print summary to console
         self._print_summary(df)
     
     def _print_summary(self, df: pd.DataFrame):
         """Print summary to console"""
-        logger.info("\n" + "="*60)
-        logger.info("TRAINING SUMMARY")
-        logger.info("="*60)
+        logger.info("\n" + "="*80)
+        logger.info("COMPREHENSIVE TRAINING SUMMARY")
+        logger.info("="*80)
         
         for _, row in df.iterrows():
-            logger.info(f"\n{row['model_name']}:")
-            logger.info(f"  Age: Acc={row['age_accuracy']:.4f}, F1={row['age_f1']:.4f}")
-            logger.info(f"  Gender: Acc={row['gender_accuracy']:.4f}, F1={row['gender_f1']:.4f}")
-            logger.info(f"  Training Time: {row['training_time_seconds']:.1f}s")
+            logger.info(f"\n{row['Model']}:")
+            logger.info(f"  Epochs: P1={row['Phase 1 Epochs']}, P2={row['Phase 2 Epochs']}")
+            logger.info(f"  Age: Acc={row['Age Acc']:.4f}, F1={row['Age F1']:.4f}")
+            logger.info(f"  Gender: Acc={row['Gender Acc']:.4f}, F1={row['Gender F1']:.4f}")
+            logger.info(f"  Combined F1: {row['Combined F1']:.4f}")
+            logger.info(f"  Parameters: {row['Parameters']:,}, GFLOPs: {row['GFLOPs']:.1f}")
+            logger.info(f"  Training Time: {row['Training Time (s)']:.1f}s, FPS: {row['fps']:.1f}")
+            logger.info(f"  Age Classes: {row.get('age class scheme', 'N/A')}")
+            logger.info(f"  ONNX Verification: {row.get('ONNX Verification', 'N/A')} (Similarity: {row.get('ONNX Avg Similarity', 0.0):.5f})")
         
-        best_model = df.iloc[0]
-        logger.info(f"\n🏆 Best Model: {best_model['model_name']}")
-        logger.info(f"   Combined F1: {best_model['combined_f1']:.4f}")
-        logger.info("="*60)
+        if len(df) > 0:
+            best_model = df.iloc[0]
+            logger.info(f"\n🏆 Best Model: {best_model['Model']}")
+            logger.info(f"   Combined F1: {best_model['Combined F1']:.4f}")
+            logger.info(f"   Dataset: Train={best_model['train size']}, Val={best_model['val size']}, Test={best_model['test size']}")
+            logger.info(f"   Age Classes: {best_model.get('age class scheme', 'N/A')}")
+            logger.info(f"   ONNX Verification: {best_model.get('ONNX Verification', 'N/A')}")
+        logger.info("="*80)

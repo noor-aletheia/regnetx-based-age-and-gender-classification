@@ -1,6 +1,3 @@
-"""
-Dataset processing and loading utilities with flexible CSV support
-"""
 import os
 import pandas as pd
 import numpy as np
@@ -47,7 +44,7 @@ class ImageDimensionDetector:
             logger.warning("Could not detect any image dimensions, using default 224x224")
             return (224, 224)
         
-        # Find most common dimensions
+
         dimension_counts = Counter(dimensions)
         most_common_dim = dimension_counts.most_common(1)[0][0]
         
@@ -106,7 +103,7 @@ class CSVColumnDetector:
                     logger.info(f"Detected image column: {col}")
                     return col
         
-        # Fallback: use first column if no pattern matches
+
         logger.warning(f"Could not detect image column, using first column: {df.columns[0]}")
         return df.columns[0]
 
@@ -120,14 +117,85 @@ class LabelEncoder:
         self.idx_to_age = {}
         self.idx_to_gender = {}
     
-    def fit_age_labels(self, age_labels: List[str]) -> Dict[str, int]:
-        """Create age label to index mapping"""
-        unique_ages = sorted(list(set(age_labels)))
-        self.age_to_idx = {age: idx for idx, age in enumerate(unique_ages)}
-        self.idx_to_age = {idx: age for age, idx in self.age_to_idx.items()}
+    def fit_age_labels(self, age_labels: List[str], age_class_scheme: str = '8-class') -> Dict[str, int]:
+        """Create age label to index mapping with flexible age grouping schemes"""
+
+        normalized_labels = []
+        for label in age_labels:
+            if label == "more than 70":
+                normalized_labels.append("70+")
+            else:
+                normalized_labels.append(label)
         
-        logger.info(f"Age classes ({len(unique_ages)}): {unique_ages}")
+        if age_class_scheme == '4-class':
+
+            self.age_to_idx = self._create_4class_mapping(normalized_labels)
+            self.idx_to_age = {
+                0: "0-9",
+                1: "10-29", 
+                2: "30-49",
+                3: "50-70+"
+            }
+            logger.info(f"Using 4-class age scheme: {list(self.idx_to_age.values())}")
+        else:
+
+            unique_ages = list(set(normalized_labels))
+            
+
+            def age_sort_key(age_range):
+
+                if age_range == "70+":
+                    return 70
+                
+
+                try:
+                    return int(age_range.split('-')[0])
+                except (ValueError, IndexError):
+
+                    return float('inf')
+            
+            unique_ages = sorted(unique_ages, key=age_sort_key)
+            self.age_to_idx = {}
+            
+
+            for idx, age in enumerate(unique_ages):
+                self.age_to_idx[age] = idx
+
+                if age == "70+":
+                    self.age_to_idx["more than 70"] = idx
+            
+            self.idx_to_age = {idx: age for age, idx in self.age_to_idx.items() if age != "more than 70"}
+            logger.info(f"Using 8-class age scheme ({len(unique_ages)} classes): {unique_ages}")
+        
+        logger.info(f"Age label mapping: {self.age_to_idx}")
         return self.age_to_idx
+    
+    def _create_4class_mapping(self, age_labels: List[str]) -> Dict[str, int]:
+        """Create mapping from original age labels to 4 age groups"""
+        age_to_group_mapping = {
+
+            "0-2": 0, "3-9": 0,
+
+            "10-19": 1, "20-29": 1,
+
+            "30-39": 2, "40-49": 2,
+
+            "50-59": 3, "60-69": 3, "70+": 3
+        }
+        
+
+        age_to_idx = {}
+        for age_label in age_labels:
+            if age_label in age_to_group_mapping:
+                age_to_idx[age_label] = age_to_group_mapping[age_label]
+            else:
+                logger.warning(f"Unknown age label '{age_label}', defaulting to group 3 (50-70+)")
+                age_to_idx[age_label] = 3
+        
+
+        age_to_idx["more than 70"] = 3
+        
+        return age_to_idx
     
     def fit_gender_labels(self, gender_labels: List[str]) -> Dict[str, int]:
         """Create gender label to index mapping"""
@@ -139,8 +207,8 @@ class LabelEncoder:
         return self.gender_to_idx
     
     def get_age_classes(self) -> int:
-        """Get number of age classes"""
-        return len(self.age_to_idx)
+        """Get number of age classes (unique indices)"""
+        return len(self.idx_to_age)
     
     def get_gender_classes(self) -> int:
         """Get number of gender classes"""
@@ -175,7 +243,7 @@ class FaceDataset(Dataset):
         if torch.is_tensor(idx):
             idx = idx.tolist()
             
-        # Get image path and load image
+
         row = self.data.iloc[idx]
         image_path = os.path.join(row['split_dir'], row['image'])
         
@@ -183,14 +251,14 @@ class FaceDataset(Dataset):
             image = Image.open(image_path).convert('RGB')
         except Exception as e:
             logger.warning(f"Error loading image {image_path}: {e}")
-            # Return a black image as fallback
+
             image = Image.new('RGB', (224, 224), (0, 0, 0))
         
-        # Get labels
+
         age_label = self.label_encoder.age_to_idx[row['age']]
         gender_label = self.label_encoder.gender_to_idx[row['gender']]
         
-        # Apply transforms
+
         if self.transform:
             image = self.transform(image)
             
@@ -222,20 +290,20 @@ class DataProcessor:
         self.batch_size = config.get('dataset.batch_size', 64)
         self.num_workers = config.get('dataset.num_workers', 4)
         
-        # Initialize label encoder
+
         self.label_encoder = LabelEncoder()
         
-        # Load data from train/val/test structure
+
         self.train_data, self.val_data, self.test_data = self._load_data_from_folders()
         
-        # Detect image dimensions
+
         self.image_size = self._detect_image_dimensions()
         
-        # Update config with detected image size
+
         self.config.set('dataset.detected_image_size', self.image_size)
         logger.info(f"Using image size: {self.image_size}x{self.image_size}")
         
-        # Create transforms
+
         self.transforms = self._create_transforms()
         
     def _load_data_from_folders(self) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -243,7 +311,7 @@ class DataProcessor:
         
         def load_split_data(split_name: str) -> pd.DataFrame:
             split_dir = os.path.join(self.root_dir, split_name)
-            # Try different CSV naming conventions
+
             csv_candidates = [
                 'groundtruth.csv',
                 f'{split_name}_groundtruth.csv',  # train_groundtruth.csv, val_groundtruth.csv
@@ -267,34 +335,34 @@ class DataProcessor:
             logger.info(f"Loading {split_name} data from {csv_path}")
             df = pd.read_csv(csv_path)
             
-            # Detect column names
+
             image_col = CSVColumnDetector.detect_image_column(df)
             age_col = CSVColumnDetector.detect_age_column(df)
             gender_col = CSVColumnDetector.detect_gender_column(df)
             
-            # Standardize column names
+
             df = df.rename(columns={
                 image_col: 'image',
                 age_col: 'age',
                 gender_col: 'gender'
             })
             
-            # Add split information
+
             df['split'] = split_name
             df['split_dir'] = split_dir
             
-            # Optional fast validation (sample only)
+
             if len(df) > 1000:
-                # For large datasets, only validate a sample
+
                 sample_df = df.sample(min(100, len(df)), random_state=42)
                 sample_valid = self._validate_image_files(sample_df, split_dir, sample_only=True)
-                if len(sample_valid) < len(sample_df) * 0.95:  # Less than 95% valid
+                if len(sample_valid) < len(sample_df) * 0.95:
                     logger.warning(f"Sample validation failed for {split_name}, running full validation...")
                     df = self._validate_image_files(df, split_dir)
                 else:
                     logger.info(f"Sample validation passed for {split_name} ({len(sample_valid)}/{len(sample_df)} valid)")
             else:
-                # For small datasets, validate all
+
                 df = self._validate_image_files(df, split_dir)
             
             logger.info(f"Loaded {len(df)} samples for {split_name}")
@@ -302,11 +370,11 @@ class DataProcessor:
             
             return df
         
-        # Load all splits
+
         train_data = load_split_data('train')
         val_data = load_split_data('val')
         
-        # Test data is optional
+
         test_data = pd.DataFrame()
         test_dir = os.path.join(self.root_dir, 'test')
         if os.path.exists(test_dir):
@@ -318,11 +386,12 @@ class DataProcessor:
             logger.warning("Test directory not found, will use validation data for testing")
             test_data = val_data.copy()
         
-        # Fit label encoders on training data
-        self.label_encoder.fit_age_labels(train_data['age'].tolist())
+
+        age_class_scheme = self.config.get('dataset.age_class_scheme', '8-class')
+        self.label_encoder.fit_age_labels(train_data['age'].tolist(), age_class_scheme)
         self.label_encoder.fit_gender_labels(train_data['gender'].tolist())
         
-        # Update config with detected classes
+
         self.config.set('dataset.age_classes', self.label_encoder.get_age_classes())
         self.config.set('dataset.gender_classes', self.label_encoder.get_gender_classes())
         
@@ -350,7 +419,7 @@ class DataProcessor:
     
     def _detect_image_dimensions(self) -> int:
         """Detect common image dimensions from dataset"""
-        # Sample images from train set
+
         sample_images = []
         for _, row in self.train_data.head(50).iterrows():
             image_path = os.path.join(row['split_dir'], row['image'])
@@ -358,12 +427,12 @@ class DataProcessor:
         
         common_width, common_height = ImageDimensionDetector.detect_common_dimensions(sample_images)
         
-        # Use the larger dimension as target size
+
         target_size = max(common_width, common_height)
         
-        # Round to nearest common size
+
         if target_size <= 128:
-            return 224  # Standard size for mobile networks
+            return 224
         elif target_size <= 256:
             return 256
         elif target_size <= 384:
@@ -375,14 +444,14 @@ class DataProcessor:
         """Print statistics for a data split"""
         logger.info(f"\n=== {split_name.upper()} Split Statistics ===")
         
-        # Age distribution
+
         logger.info(f"\nAge Distribution:")
         age_counts = data['age'].value_counts().sort_index()
         for age, count in age_counts.items():
             percentage = (count / len(data)) * 100
             logger.info(f"  {age}: {count} ({percentage:.1f}%)")
         
-        # Gender distribution
+
         logger.info(f"\nGender Distribution:")
         gender_counts = data['gender'].value_counts()
         for gender, count in gender_counts.items():
@@ -390,53 +459,56 @@ class DataProcessor:
             logger.info(f"  {gender}: {count} ({percentage:.1f}%)")
     
     def _create_transforms(self) -> Dict[str, transforms.Compose]:
-        """Create image transforms for train, validation, and test sets"""
-        # Get normalization parameters
-        mean = self.config.get('augmentation.train.normalize.mean', [0.485, 0.456, 0.406])
-        std = self.config.get('augmentation.train.normalize.std', [0.229, 0.224, 0.225])
-        
-        # Training transforms with augmentation
-        train_transforms = [
-            transforms.Resize((self.image_size, self.image_size)),
-        ]
-        
-        # Add augmentations if specified
-        if self.config.get('augmentation.train.horizontal_flip'):
-            train_transforms.append(
-                transforms.RandomHorizontalFlip(p=self.config.get('augmentation.train.horizontal_flip'))
-            )
-        
-        if self.config.get('augmentation.train.rotation'):
-            rotation_degrees = self.config.get('augmentation.train.rotation')
-            train_transforms.append(
-                transforms.RandomRotation(degrees=rotation_degrees)
-            )
-        
-        if self.config.get('augmentation.train.color_jitter'):
-            jitter_params = self.config.get('augmentation.train.color_jitter')
-            train_transforms.append(
-                transforms.ColorJitter(
-                    brightness=jitter_params.get('brightness', 0),
-                    contrast=jitter_params.get('contrast', 0),
-                    saturation=jitter_params.get('saturation', 0),
-                    hue=jitter_params.get('hue', 0)
-                )
-            )
-        
-        train_transforms.extend([
-            transforms.ToTensor(),
-            transforms.Normalize(mean=mean, std=std)
-        ])
-        
-        # Validation/test transforms (no augmentation)
+        """Create image transforms for train, validation, and test sets, using presets for age/gender"""
+        presets = self.config.get('augmentation.presets', {})
+        train_cfg = self.config.get('augmentation.train', {})
+        mean = train_cfg.get('normalize', {}).get('mean', [0.485, 0.456, 0.406])
+        std = train_cfg.get('normalize', {}).get('std', [0.229, 0.224, 0.225])
+
+        def build_transform(preset_name):
+            preset = presets.get(preset_name, {})
+            t = [transforms.Resize((self.image_size, self.image_size))]
+            if preset.get('random_resized_crop', False):
+                t.append(transforms.RandomResizedCrop(self.image_size, scale=(0.7, 1.0)))
+            if preset.get('horizontal_flip', 0):
+                t.append(transforms.RandomHorizontalFlip(p=preset['horizontal_flip']))
+            if preset.get('rotation', 0):
+                t.append(transforms.RandomRotation(degrees=preset['rotation']))
+            if 'color_jitter' in preset:
+                cj = preset['color_jitter']
+                t.append(transforms.ColorJitter(
+                    brightness=cj.get('brightness', 0),
+                    contrast=cj.get('contrast', 0),
+                    saturation=cj.get('saturation', 0),
+                    hue=cj.get('hue', 0)
+                ))
+            if preset.get('random_erasing', 0):
+                t.append(transforms.ToTensor())
+                t.append(transforms.Normalize(mean=mean, std=std))
+                t.append(transforms.RandomErasing(p=preset['random_erasing']))
+            else:
+                t.append(transforms.ToTensor())
+                t.append(transforms.Normalize(mean=mean, std=std))
+            return transforms.Compose(t)
+
+
+        age_transform = build_transform(train_cfg.get('age', 'strong'))
+        gender_transform = build_transform(train_cfg.get('gender', 'medium'))
+
+
+        train_transform = age_transform
+
+        val_test_cfg = self.config.get('augmentation.val_test', {})
+        val_mean = val_test_cfg.get('normalize', {}).get('mean', [0.485, 0.456, 0.406])
+        val_std = val_test_cfg.get('normalize', {}).get('std', [0.229, 0.224, 0.225])
         val_test_transforms = [
             transforms.Resize((self.image_size, self.image_size)),
             transforms.ToTensor(),
-            transforms.Normalize(mean=mean, std=std)
+            transforms.Normalize(mean=val_mean, std=val_std)
         ]
-        
+
         return {
-            'train': transforms.Compose(train_transforms),
+            'train': train_transform,
             'val': transforms.Compose(val_test_transforms),
             'test': transforms.Compose(val_test_transforms)
         }
@@ -445,7 +517,7 @@ class DataProcessor:
         """Get train, validation, and test datasets"""
         train_dataset = FaceDataset(
             self.train_data, 
-            '', # Root dir handled in split_dir
+            '',
             self.label_encoder,
             transform=self.transforms['train']
         )
@@ -499,24 +571,34 @@ class DataProcessor:
     
     def get_class_weights(self) -> Tuple[torch.Tensor, torch.Tensor]:
         """Calculate class weights for handling class imbalance, with optional power scaling"""
-        # Configurable mode and alpha
+
         mode = self.config.get('class_weight_mode', 'default')
         alpha = float(self.config.get('class_weight_power_alpha', 1.0))
 
-        # Age class weights
+
         age_counts = self.train_data['age'].value_counts()
         age_weights = torch.zeros(self.label_encoder.get_age_classes())
         total_age_samples = len(self.train_data)
         C_age = self.label_encoder.get_age_classes()
+        
+
+        class_counts = {}
         for age, count in age_counts.items():
             age_idx = self.label_encoder.age_to_idx[age]
+            if age_idx in class_counts:
+                class_counts[age_idx] += count
+            else:
+                class_counts[age_idx] = count
+        
+
+        for age_idx, count in class_counts.items():
             if mode == 'power':
                 weight = (total_age_samples / (C_age * count)) ** alpha
             else:
                 weight = total_age_samples / (C_age * count)
             age_weights[age_idx] = weight
 
-        # Gender class weights
+
         gender_counts = self.train_data['gender'].value_counts()
         gender_weights = torch.zeros(self.label_encoder.get_gender_classes())
         total_gender_samples = len(self.train_data)

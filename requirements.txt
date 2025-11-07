@@ -15,5 +15,7 @@ onnx>=1.14.0
 onnxruntime>=1.15.0
 onnxconverter-common>=1.13.0
 onnxscript>=0.1.0
+onnxsim>=0.4.35
 typing_extensions
 tensorboard>=2.10.0
+ptflops>=0.7.0

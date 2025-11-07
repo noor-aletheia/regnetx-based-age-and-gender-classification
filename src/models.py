@@ -1,6 +1,3 @@
-"""
-Model architectures for age and gender prediction using RegNetX variants
-"""
 import torch
 import torch.nn as nn
 import torchvision.models as models
@@ -8,6 +5,7 @@ import timm
 from typing import Dict, Any, Tuple
 import logging
 from config import Config
+from focal_loss import FocalLoss
 
 logger = logging.getLogger(__name__)
 
@@ -30,17 +28,13 @@ class DualHeadRegNetX(nn.Module):
         self.num_age_classes = num_age_classes
         self.num_gender_classes = num_gender_classes
         
-        # Load base model
         self.backbone = self._create_backbone(model_name, pretrained)
         
-        # Get feature dimension
         self.feature_dim = self._get_feature_dim()
         
-        # Create classification heads
         self.age_head = self._create_classification_head(self.feature_dim, num_age_classes, 'age')
         self.gender_head = self._create_classification_head(self.feature_dim, num_gender_classes, 'gender')
         
-        # Initialize custom layers
         self._initialize_heads()
         
         logger.info(f"Created {model_name} with {self.feature_dim} features")
@@ -48,7 +42,6 @@ class DualHeadRegNetX(nn.Module):
     
     def _create_backbone(self, model_name: str, pretrained: bool):
         """Create the backbone network"""
-        # Use timm models for RegNetX variants
         try:
             model = timm.create_model(model_name, pretrained=pretrained, num_classes=0)  # num_classes=0 removes classifier
             backbone = model
@@ -61,7 +54,6 @@ class DualHeadRegNetX(nn.Module):
     
     def _get_feature_dim(self) -> int:
         """Get the feature dimension of the backbone"""
-        # Known feature dimensions for RegNetX models
         regnetx_feature_dims = {
             'regnetx_006': 528,
             'regnetx_008': 672,
@@ -73,13 +65,11 @@ class DualHeadRegNetX(nn.Module):
             logger.info(f"Using known feature dimension for {self.model_name}: {feature_dim}")
             return feature_dim
         
-        # For unknown models, detect feature dimension dynamically
         test_input = torch.randn(1, 3, 224, 224)
         try:
             with torch.no_grad():
                 features = self.backbone(test_input)
                 if len(features.shape) == 4:  # [B, C, H, W]
-                    # Apply global average pooling
                     features = torch.nn.functional.adaptive_avg_pool2d(features, (1, 1))
                 feature_dim = features.view(features.size(0), -1).shape[1]
             logger.info(f"Detected feature dimension for {self.model_name}: {feature_dim}")
@@ -90,18 +80,32 @@ class DualHeadRegNetX(nn.Module):
     
     def _create_classification_head(self, input_dim: int, num_classes: int, head_name: str):
         """Create a classification head"""
-        return nn.Sequential(
-            nn.AdaptiveAvgPool2d((1, 1)),
-            nn.Flatten(),
-            nn.Dropout(0.2),
-            nn.Linear(input_dim, 512),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.5),
-            nn.Linear(512, 256),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.3),
-            nn.Linear(256, num_classes)
-        )
+        if head_name == 'age':
+            return nn.Sequential(
+                nn.AdaptiveAvgPool2d((1, 1)),
+                nn.Flatten(),
+                nn.Dropout(0.4),
+                nn.Linear(input_dim, 512),
+                nn.ReLU(inplace=True),
+                nn.Dropout(0.5),
+                nn.Linear(512, 256),
+                nn.ReLU(inplace=True),
+                nn.Dropout(0.5),
+                nn.Linear(256, num_classes)
+            )
+        else:
+            return nn.Sequential(
+                nn.AdaptiveAvgPool2d((1, 1)),
+                nn.Flatten(),
+                nn.Dropout(0.2),
+                nn.Linear(input_dim, 512),
+                nn.ReLU(inplace=True),
+                nn.Dropout(0.5),
+                nn.Linear(512, 256),
+                nn.ReLU(inplace=True),
+                nn.Dropout(0.3),
+                nn.Linear(256, num_classes)
+            )
     
     def _initialize_heads(self):
         """Initialize the classification heads with Xavier initialization"""
@@ -137,16 +141,12 @@ class DualHeadRegNetX(nn.Module):
         Returns:
             Dictionary with 'age' and 'gender' predictions
         """
-        # Extract features using backbone
         features = self.backbone(x)
         
-        # Handle different output formats from timm vs torchvision
         if len(features.shape) == 2:  # Already flattened [B, Features]
-            # For timm models with num_classes=0, features are already pooled and flattened
             age_logits = self.age_head[2:](features)  # Skip AdaptiveAvgPool2d and Flatten
             gender_logits = self.gender_head[2:](features)
         else:  # [B, C, H, W] format
-            # For torchvision models, need to apply pooling
             age_logits = self.age_head(features)
             gender_logits = self.gender_head(features)
         
@@ -159,9 +159,7 @@ class DualHeadRegNetX(nn.Module):
 class ModelFactory:
     """Factory class for creating RegNetX models"""
     
-    # RegNetX model variants from timm
     SUPPORTED_MODELS = [
-        # RegNetX models
         'regnetx_006', 'regnetx_008', 'regnetx_016'
     ]
     
@@ -244,7 +242,6 @@ def create_loss_functions(config: Config, device: torch.device,
     Returns:
         Tuple of (age_loss_fn, gender_loss_fn)
     """
-    # Check for alternative manual loss weights in config
     manual_age_weights = config.get('loss_weights.age', None)
     manual_gender_weights = config.get('loss_weights.gender', None)
 
@@ -262,8 +259,11 @@ def create_loss_functions(config: Config, device: torch.device,
     else:
         gender_class_weights = None
 
-    # Only use standard CrossEntropyLoss
-    age_loss_fn = nn.CrossEntropyLoss(weight=age_class_weights)
+    loss_type = config.get('training.loss_type', 'cross_entropy')
+    if loss_type == 'focal':
+        age_loss_fn = FocalLoss(alpha=age_class_weights, gamma=2.0)
+    else:
+        age_loss_fn = nn.CrossEntropyLoss(weight=age_class_weights)
     gender_loss_fn = nn.CrossEntropyLoss(weight=gender_class_weights)
     return age_loss_fn, gender_loss_fn
 
@@ -283,7 +283,6 @@ def create_optimizer(model: DualHeadRegNetX, config: Config) -> torch.optim.Opti
     learning_rate = float(config.get('training.phase1.learning_rate', 1e-3))
     weight_decay = float(config.get('training.phase1.weight_decay', 1e-4))
     
-    # Get only trainable parameters
     trainable_params = model.get_trainable_parameters()
     
     if optimizer_name.lower() == 'adamw':
