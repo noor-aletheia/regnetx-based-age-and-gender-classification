@@ -537,14 +537,23 @@ class ModelInference:
                 # Get probabilities for detailed analysis
                 age_probs = torch.softmax(outputs['age'], dim=1).cpu().numpy()
                 gender_probs = torch.softmax(outputs['gender'], dim=1).cpu().numpy()
-                
+
+                # Calculate entropy for each prediction
+                def entropy(probs):
+                    # Add small epsilon to avoid log(0)
+                    eps = 1e-8
+                    return -np.sum(probs * np.log(probs + eps), axis=1)
+
+                age_entropy = entropy(age_probs)
+                gender_entropy = entropy(gender_probs)
+
                 # Store results
                 all_age_preds.extend(age_pred)
                 all_gender_preds.extend(gender_pred)
                 all_age_targets.extend(age_labels.numpy())
                 all_gender_targets.extend(gender_labels.numpy())
                 all_image_paths.extend(batch['image_path'])
-                
+
                 # Store detailed predictions if requested
                 if save_predictions:
                     for i in range(len(age_pred)):
@@ -555,9 +564,11 @@ class ModelInference:
                             'age_pred_class': age_classes[age_pred[i]],
                             'gender_pred_class': gender_classes[gender_pred[i]],
                             'age_confidence': float(age_probs[i][age_pred[i]]),
-                            'gender_confidence': float(gender_probs[i][gender_pred[i]])
+                            'gender_confidence': float(gender_probs[i][gender_pred[i]]),
+                            'age_entropy': float(age_entropy[i]),
+                            'gender_entropy': float(gender_entropy[i])
                         })
-                
+
                 # Record timing
                 batch_time = time.time() - batch_start_time
                 inference_times.append(batch_time)
@@ -631,40 +642,57 @@ class ModelInference:
         print(f"\n{'='*60}")
         print(f"INFERENCE RESULTS")
         print(f"{'='*60}")
-        
+
         # Model info
         model_info = results['model_info']
         print(f"Model: {model_info['model_name']}")
         print(f"Parameters: {model_info['total_parameters']:,}")
         print(f"Age Classes: {len(model_info['age_classes'])}")
         print(f"Gender Classes: {len(model_info['gender_classes'])}")
-        
+
         # Dataset info
         dataset_info = results['dataset_info']
         print(f"\nDataset: {dataset_info['total_samples']} samples")
         print(f"Valid age labels: {dataset_info['valid_age_samples']}")
         print(f"Valid gender labels: {dataset_info['valid_gender_samples']}")
-        
+
         # Age metrics
         age_metrics = results['age_metrics']
         print(f"\nAge Classification:")
         print(f"  Accuracy: {age_metrics['accuracy']:.4f} ({age_metrics['accuracy']*100:.2f}%)")
         print(f"  F1 Score: {age_metrics['f1_weighted']:.4f}")
-        
+
         # Gender metrics
         gender_metrics = results['gender_metrics']
         print(f"\nGender Classification:")
         print(f"  Accuracy: {gender_metrics['accuracy']:.4f} ({gender_metrics['accuracy']*100:.2f}%)")
         print(f"  F1 Score: {gender_metrics['f1_weighted']:.4f}")
-        
+
         # Performance
         performance = results['performance']
         print(f"\nPerformance:")
         print(f"  Total Time: {performance['total_inference_time']:.2f}s")
         print(f"  FPS: {performance['overall_fps']:.2f} samples/second")
         print(f"  Avg Batch Time: {performance['avg_batch_time']:.4f}s")
-        
+
         print(f"{'='*60}")
+
+        # Gender-Age Intersectional Accuracy
+        if 'predictions' in results:
+            try:
+                import pandas as pd
+                df = pd.DataFrame(results['predictions'])
+                print("\n--- Gender-Age Intersectional Accuracy ---")
+                gender_list = sorted(df['gender_true'].unique())
+                age_list = sorted(df['age_true'].unique())
+                for gender in gender_list:
+                    for age in age_list:
+                        group = df[(df['gender_true'] == gender) & (df['age_true'] == age)]
+                        if len(group) > 0:
+                            acc = (group['age_pred_class'] == group['age_true']).mean()
+                            print(f"Gender: {gender:6} | Age: {age:8} | Accuracy: {acc:.3f} | N={len(group)}")
+            except Exception as e:
+                print(f"[Warning] Could not compute Gender-Age Intersectional Accuracy: {e}")
     
     def _save_results(self, results: Dict[str, Any], output_dir: Path, 
                      age_classes: List[str], gender_classes: List[str], 

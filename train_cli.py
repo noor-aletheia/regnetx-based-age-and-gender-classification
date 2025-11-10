@@ -87,6 +87,9 @@ def parse_arguments():
     parser.add_argument('--age-classes', choices=['8-class', '4-class'], default='8-class',
                         help='Age classification scheme: 8-class (original) or 4-class (0-9, 10-29, 30-49, 50-70+)')
     
+    parser.add_argument('--onnx-dynamic-axes', action='store_true',
+                        help='Enable dynamic batch size for ONNX export (allows variable batch sizes)')
+    
     return parser.parse_args()
 
 def create_runtime_config(args, base_config_path: str) -> Config:
@@ -179,6 +182,10 @@ def create_runtime_config(args, base_config_path: str) -> Config:
         config.set('dataset.class_weight_power_alpha', args.class_weight_power_alpha)
     
     config.set('dataset.age_class_scheme', args.age_classes)
+    
+    if args.onnx_dynamic_axes:
+        config.set('logging.onnx_dynamic_axes', True)
+        logger.info("ONNX dynamic axes enabled for export")
     
     return config
 

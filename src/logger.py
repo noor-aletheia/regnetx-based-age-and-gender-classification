@@ -281,6 +281,15 @@ class ModelSaver:
                 'verbose': False
             }
             
+            # Add dynamic axes if enabled in config
+            if self.config.get('logging.onnx_dynamic_axes', False):
+                export_kwargs['dynamic_axes'] = {
+                    'input': {0: 'batch_size'},
+                    'age_output': {0: 'batch_size'},
+                    'gender_output': {0: 'batch_size'}
+                }
+                logger.info("ONNX export with dynamic axes enabled")
+            
             torch.onnx.export(**export_kwargs)
             
             onnx_model = onnx.load(onnx_path)

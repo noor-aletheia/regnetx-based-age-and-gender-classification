@@ -123,3 +123,4 @@ logging:
   save_checkpoint_every: 5
   simplify_onnx: true
   onnx_use_overall_similarity: true
+  onnx_dynamic_axes: false  
