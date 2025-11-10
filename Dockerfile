@@ -20,7 +20,7 @@ COPY src/ ./src/
 COPY config.yaml .
 COPY train_cli.py .
 COPY train_cli.sh .
-
+COPY inference.py .
 
 # Set environment variables
 ENV PYTHONPATH=/app/src:$PYTHONPATH

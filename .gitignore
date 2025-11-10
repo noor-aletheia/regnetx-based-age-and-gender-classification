@@ -52,7 +52,6 @@ drama/
 drama_augmented/
 expanded_merged_dataset/
 mixed_data/
-helper/
 
 # Docker
 docker-compose.yml

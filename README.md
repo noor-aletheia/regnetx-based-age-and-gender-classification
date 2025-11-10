@@ -18,7 +18,7 @@ A comprehensive PyTorch pipeline for age and gender classification from face ima
 expanded_merged_dataset/
 ├── train/           # ~97K images (pre-augmented + merged datasets)
 ├── val/             # ~12K images  
-├── test/            # ~12K images
+├── test/            # ~12K images![alt text](image.png)
 └── groundtruth.csv  # Unified labels: name,age,gender,path
 ```
 
