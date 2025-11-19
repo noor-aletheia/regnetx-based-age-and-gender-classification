@@ -90,42 +90,20 @@ def train_single_model(model_name: str, config: Config, data_processor: DataProc
             logger.error(f"Error type: {type(e).__name__}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             raise
-        
+
         for i, epoch_data in enumerate(history['epoch']):
             epoch_metrics = {}
             for key in history:
                 if key != 'epoch' and i < len(history[key]):
                     epoch_metrics[key] = history[key][i]
-            
+
             training_logger.log_epoch(
                 epoch=epoch_data,
                 metrics=epoch_metrics,
                 phase=history['phase'][i]
             )
-        
 
-        # Save best model checkpoint
-        best_metrics = {
-            'val_loss': trainer.best_metrics['val_loss'],
-            'val_age_accuracy': trainer.best_metrics['val_age_accuracy'],
-            'val_gender_accuracy': trainer.best_metrics['val_gender_accuracy'],
-            'val_age_f1': trainer.best_metrics['val_age_f1'],
-            'val_gender_f1': trainer.best_metrics['val_gender_f1'],
-        }
-        model_path = model_saver.save_best_model(model, best_metrics, model_name)
-
-        # Reload best model weights before test evaluation
-        if os.path.isfile(model_path):
-            checkpoint = torch.load(model_path, map_location='cpu')
-            if 'model_state_dict' in checkpoint:
-                model.load_state_dict(checkpoint['model_state_dict'])
-            else:
-                model.load_state_dict(checkpoint)
-            logger.info(f"Reloaded best model weights from {model_path} for test evaluation.")
-        else:
-            logger.warning(f"Best model file not found at {model_path}, using current model weights for test evaluation.")
-
-        logger.info("Evaluating on test set with best model...")
+        logger.info("Evaluating on test set...")
         test_results = trainer.evaluate(test_loader)
 
         # Use test set FPS from test_results['performance']['overall_fps']
@@ -133,13 +111,21 @@ def train_single_model(model_name: str, config: Config, data_processor: DataProc
 
         training_logger.log_test_results(test_results)
 
-        # Update best_metrics with test results
-        best_metrics.update({
+        best_metrics = {
+            'val_loss': trainer.best_metrics['val_loss'],
+            'val_age_accuracy': trainer.best_metrics['val_age_accuracy'],
+            'val_gender_accuracy': trainer.best_metrics['val_gender_accuracy'],
+            'val_age_f1': trainer.best_metrics['val_age_f1'],
+            'val_gender_f1': trainer.best_metrics['val_gender_f1'],
             'test_age_accuracy': test_results['age_metrics']['accuracy'],
             'test_gender_accuracy': test_results['gender_metrics']['accuracy'],
             'test_age_f1': test_results['age_metrics']['f1'],
             'test_gender_f1': test_results['gender_metrics']['f1']
-        })
+        }
+
+        logger.info(f"Saving best model to directory: {model_saver.models_dir}")
+        model_path = model_saver.save_best_model(model, best_metrics, model_name)
+        logger.info(f"Best model full path: {model_path}")
 
         training_time = time.time() - start_time
 
@@ -183,15 +169,14 @@ def train_single_model(model_name: str, config: Config, data_processor: DataProc
             gflops=gflops,
             fps=test_fps,
         )
-        
+
         training_logger.close()
-        
+
         logger.info(f"✅ Model {model_name} training completed successfully!")
         logger.info(f"   Training time: {training_time:.1f}s")
         logger.info(f"   Test Age Accuracy: {test_results['age_metrics']['accuracy']:.4f}")
         logger.info(f"   Test Gender Accuracy: {test_results['gender_metrics']['accuracy']:.4f}")
-        
-        
+
         return {
             'model_name': model_name,
             'success': True,
@@ -200,7 +185,6 @@ def train_single_model(model_name: str, config: Config, data_processor: DataProc
             'model_path': model_path,
             'best_metrics': best_metrics
         }
-        
     except Exception as e:
         logger.error(f"❌ Error training model {model_name}: {str(e)}")
         training_logger.close()
@@ -229,7 +213,7 @@ def main():
         results_aggregator = ResultsAggregator(config)
         model_variants = config.get('models.variants', [
             'regnet_200m', 'regnet_400m', 'regnet_600m', 'regnet_800m',
-            'regnet_1600m', 'regnet_3200m', 'regnet_4000m', 'regnet_6400m'])
+            'regnet_1600m', 'regnet_3200m','regnet_6400m'])
         all_results = []
         successful_models = 0
         total_training_time = 0
