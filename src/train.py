@@ -103,31 +103,46 @@ def train_single_model(model_name: str, config: Config, data_processor: DataProc
                 phase=history['phase'][i]
             )
         
-        logger.info("Evaluating on test set...")
-        test_results = trainer.evaluate(test_loader)
-        
-        training_logger.log_test_results(test_results)
-        
+
+        # Save best model checkpoint
         best_metrics = {
             'val_loss': trainer.best_metrics['val_loss'],
             'val_age_accuracy': trainer.best_metrics['val_age_accuracy'],
             'val_gender_accuracy': trainer.best_metrics['val_gender_accuracy'],
             'val_age_f1': trainer.best_metrics['val_age_f1'],
             'val_gender_f1': trainer.best_metrics['val_gender_f1'],
+        }
+        model_path = model_saver.save_best_model(model, best_metrics, model_name)
+
+        # Reload best model weights before test evaluation
+        if os.path.isfile(model_path):
+            checkpoint = torch.load(model_path, map_location='cpu')
+            if 'model_state_dict' in checkpoint:
+                model.load_state_dict(checkpoint['model_state_dict'])
+            else:
+                model.load_state_dict(checkpoint)
+            logger.info(f"Reloaded best model weights from {model_path} for test evaluation.")
+        else:
+            logger.warning(f"Best model file not found at {model_path}, using current model weights for test evaluation.")
+
+        logger.info("Evaluating on test set with best model...")
+        test_results = trainer.evaluate(test_loader)
+
+        # Use test set FPS from test_results['performance']['overall_fps']
+        test_fps = test_results.get('performance', {}).get('overall_fps', 0.0)
+
+        training_logger.log_test_results(test_results)
+
+        # Update best_metrics with test results
+        best_metrics.update({
             'test_age_accuracy': test_results['age_metrics']['accuracy'],
             'test_gender_accuracy': test_results['gender_metrics']['accuracy'],
             'test_age_f1': test_results['age_metrics']['f1'],
             'test_gender_f1': test_results['gender_metrics']['f1']
-        }
-        
-        model_path = model_saver.save_best_model(model, best_metrics, model_name)
-        
-        cosine_similarity_results = {}
-        if config.get('logging.export_onnx', True):
-            cosine_similarity_results = model_saver.export_to_onnx(model, model_name)
-        
+        })
+
         training_time = time.time() - start_time
-        
+
         training_config = {
             'phase1_epochs': config.get('training.phase1.epochs', 0),
             'phase2_epochs': config.get('training.phase2.epochs', 0),
@@ -142,13 +157,13 @@ def train_single_model(model_name: str, config: Config, data_processor: DataProc
             'batch_size': config.get('dataset.batch_size', 0),
             'age_class_scheme': config.get('dataset.age_class_scheme', '8-class')
         }
-        
+
         dataset_sizes = {
             'train': len(train_loader.dataset),
             'val': len(val_loader.dataset),
             'test': len(test_loader.dataset)
         }
-        
+
         try:
             from ptflops import get_model_complexity_info
             dummy_input = torch.randn(1, 3, 224, 224)
@@ -156,17 +171,6 @@ def train_single_model(model_name: str, config: Config, data_processor: DataProc
             gflops = float(gflops.split(' ')[0]) if isinstance(gflops, str) else gflops
         except:
             gflops = 0.0
-            
-        try:
-            model.eval()
-            dummy_input = torch.randn(1, 3, 224, 224).to(model.device if hasattr(model, 'device') else 'cpu')
-            start_fps = time.time()
-            with torch.no_grad():
-                for _ in range(100):
-                    _ = model(dummy_input)
-            fps = 100.0 / (time.time() - start_fps)
-        except:
-            fps = 0.0
 
         model_info = ModelFactory.get_model_info(model)
         results_aggregator.add_model_results(
@@ -177,8 +181,7 @@ def train_single_model(model_name: str, config: Config, data_processor: DataProc
             training_config=training_config,
             dataset_sizes=dataset_sizes,
             gflops=gflops,
-            fps=fps,
-            cosine_similarity_results=cosine_similarity_results
+            fps=test_fps,
         )
         
         training_logger.close()
@@ -188,15 +191,6 @@ def train_single_model(model_name: str, config: Config, data_processor: DataProc
         logger.info(f"   Test Age Accuracy: {test_results['age_metrics']['accuracy']:.4f}")
         logger.info(f"   Test Gender Accuracy: {test_results['gender_metrics']['accuracy']:.4f}")
         
-        if cosine_similarity_results:
-            logger.info(f"   ONNX Verification Results:")
-            logger.info(f"     Average Cosine Similarity: {cosine_similarity_results.get('average_cosine_similarity', 0):.6f}")
-            logger.info(f"     Age Output Similarity: {cosine_similarity_results.get('age_output_similarity', 0):.6f}")
-            logger.info(f"     Gender Output Similarity: {cosine_similarity_results.get('gender_output_similarity', 0):.6f}")
-            if cosine_similarity_results.get('verification_passed', False):
-                logger.info(f"     ✅ ONNX verification PASSED")
-            else:
-                logger.info(f"     ⚠️ ONNX verification FAILED")
         
         return {
             'model_name': model_name,
@@ -233,7 +227,9 @@ def main():
         logger.info("Loading and processing dataset...")
         data_processor = DataProcessor(config)
         results_aggregator = ResultsAggregator(config)
-        model_variants = config.get('models.variants', ['mobilenetv3_small_075'])
+        model_variants = config.get('models.variants', [
+            'regnet_200m', 'regnet_400m', 'regnet_600m', 'regnet_800m',
+            'regnet_1600m', 'regnet_3200m', 'regnet_4000m', 'regnet_6400m'])
         all_results = []
         successful_models = 0
         total_training_time = 0

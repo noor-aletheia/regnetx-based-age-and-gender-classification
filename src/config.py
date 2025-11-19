@@ -28,7 +28,6 @@ class Config:
         with open(self.config_path, 'r') as file:
             config = yaml.safe_load(file)
             
-        # Validate required sections
         required_sections = ['dataset', 'models', 'training', 'output']
         for section in required_sections:
             if section not in config:

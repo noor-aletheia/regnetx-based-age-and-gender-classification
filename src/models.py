@@ -1,11 +1,17 @@
 import torch
 import torch.nn as nn
 import torchvision.models as models
-import timm
+import os
 from typing import Dict, Any, Tuple
 import logging
 from config import Config
 from focal_loss import FocalLoss
+
+# Import custom RegNet implementation
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from regnet import get_regnet, REGNET_MODEL_ZOO
+from reglayers import WrappedModel
 
 logger = logging.getLogger(__name__)
 
@@ -41,48 +47,66 @@ class DualHeadRegNetX(nn.Module):
         logger.info(f"Age classes: {num_age_classes}, Gender classes: {num_gender_classes}")
     
     def _create_backbone(self, model_name: str, pretrained: bool):
-        """Create the backbone network"""
+        """Create the backbone network using unified RegNet interface"""
         try:
-            model = timm.create_model(model_name, pretrained=pretrained, num_classes=0)  # num_classes=0 removes classifier
-            backbone = model
-            logger.info(f"Using timm RegNetX model: {model_name}")
+            # Map legacy model names to REGNET_MODEL_ZOO keys
+            model_mapping = {
+                'regnet_1600m': 'regnet_1600m',
+                'regnet_200m': 'regnet_200m',
+                'regnet_400m': 'regnet_400m',
+                'regnet_600m': 'regnet_600m',
+                'regnet_800m': 'regnet_800m',
+                'regnet_3200m': 'regnet_3200m',
+                'regnet_4000m': 'regnet_4000m',
+                'regnet_6400m': 'regnet_6400m',
+            }
+            if model_name not in model_mapping:
+                raise ValueError(f"Unsupported model: {model_name}")
+            regnet_key = model_mapping[model_name]
+            # Use get_regnet to create backbone (pretrained or not)
+            full_model = get_regnet(regnet_key, pretrained=pretrained)
+            # Remove the classification head if present
+            backbone_modules = []
+            for name, module in full_model.named_children():
+                if name != 'head':
+                    backbone_modules.append(module)
+            backbone = nn.Sequential(*backbone_modules)
+            logger.info(f"Created RegNet backbone for {model_name} using get_regnet")
+            return backbone
         except Exception as e:
-            logger.error(f"Failed to load timm RegNetX model {model_name}: {e}")
-            raise ValueError(f"Unsupported RegNetX model: {model_name}")
-        
-        return backbone
+            logger.error(f"Failed to create RegNet backbone {model_name}: {e}")
+            raise ValueError(f"Failed to create RegNet backbone: {model_name}")
+    
+
     
     def _get_feature_dim(self) -> int:
-        """Get the feature dimension of the backbone"""
-        regnetx_feature_dims = {
-            'regnetx_006': 528,
-            'regnetx_008': 672,
-            'regnetx_016': 912
-        }
-        
-        if self.model_name in regnetx_feature_dims:
-            feature_dim = regnetx_feature_dims[self.model_name]
-            logger.info(f"Using known feature dimension for {self.model_name}: {feature_dim}")
+        """Get the feature dimension of the backbone from REGNET_MODEL_ZOO or auto-detect."""
+        regnet_key = self.model_name
+        # Map legacy names to REGNET_MODEL_ZOO keys
+        # No legacy_map needed; only available models are supported
+        if regnet_key in REGNET_MODEL_ZOO:
+            feature_dim = REGNET_MODEL_ZOO[regnet_key]['feature_dim']
+            logger.info(f"Using feature dimension from REGNET_MODEL_ZOO for {self.model_name}: {feature_dim}")
             return feature_dim
-        
+        # Fallback: auto-detect
         test_input = torch.randn(1, 3, 224, 224)
         try:
             with torch.no_grad():
                 features = self.backbone(test_input)
-                if len(features.shape) == 4:  # [B, C, H, W]
+                if len(features.shape) == 4:
                     features = torch.nn.functional.adaptive_avg_pool2d(features, (1, 1))
                 feature_dim = features.view(features.size(0), -1).shape[1]
-            logger.info(f"Detected feature dimension for {self.model_name}: {feature_dim}")
+            logger.info(f"Auto-detected feature dimension for {self.model_name}: {feature_dim}")
             return feature_dim
         except Exception as e:
-            logger.warning(f"Could not detect feature dimension for {self.model_name}, using default 528")
-            return 528
+            logger.warning(f"Could not detect feature dimension for {self.model_name}, using default 912")
+            return 912
     
     def _create_classification_head(self, input_dim: int, num_classes: int, head_name: str):
         """Create a classification head"""
         if head_name == 'age':
             return nn.Sequential(
-                nn.AdaptiveAvgPool2d((1, 1)),
+                nn.AvgPool2d(kernel_size=7, stride=1),
                 nn.Flatten(),
                 nn.Dropout(0.4),
                 nn.Linear(input_dim, 512),
@@ -95,9 +119,9 @@ class DualHeadRegNetX(nn.Module):
             )
         else:
             return nn.Sequential(
-                nn.AdaptiveAvgPool2d((1, 1)),
+                nn.AvgPool2d(kernel_size=7, stride=1),
                 nn.Flatten(),
-                nn.Dropout(0.2),
+                nn.Dropout(0.4),
                 nn.Linear(input_dim, 512),
                 nn.ReLU(inplace=True),
                 nn.Dropout(0.5),
@@ -160,7 +184,7 @@ class ModelFactory:
     """Factory class for creating RegNetX models"""
     
     SUPPORTED_MODELS = [
-        'regnetx_006', 'regnetx_008', 'regnetx_016'
+        'regnet_1600m', 'regnet_200m', 'regnet_400m', 'regnet_600m', 'regnet_800m', 'regnet_3200m', 'regnet_4000m', 'regnet_6400m'
     ]
     
     @staticmethod

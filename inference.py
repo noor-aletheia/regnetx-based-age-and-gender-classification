@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-"""
-RegNetX Model Inference Script
-Single comprehensive script for running inference on any dataset with any trained model
-"""
-
 import argparse
 import os
 import time
@@ -23,7 +17,6 @@ from tqdm import tqdm
 from PIL import Image
 import torchvision.transforms as transforms
 
-# Import from src (with fallback for standalone usage)
 try:
     import sys
     sys.path.append('src')
@@ -39,8 +32,8 @@ except ImportError:
                 'augmentation': {
                     'val_test': {
                         'normalize': {
-                            'mean': [0.485, 0.456, 0.406],
-                            'std': [0.229, 0.224, 0.225]
+                            'mean': [0.498, 0.498, 0.498],
+                            'std': [0.498, 0.498, 0.498]
                         }
                     }
                 }
@@ -56,37 +49,46 @@ except ImportError:
                     return default
             return value
 
-    # Simplified DualHeadRegNetX for standalone usage
-    import timm
+    import sys
+    import os
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    from regnet import get_regnet, REGNET_MODEL_ZOO
     
     class DualHeadRegNetX(nn.Module):
         def __init__(self, model_name: str, age_classes: str = '4-class', pretrained: bool = True):
             super().__init__()
             self.model_name = model_name
             self.age_classes = age_classes
-            
-            # Determine number of age classes
             if age_classes == '4-class':
                 self.num_age_classes = 4
             elif age_classes == '8-class':
                 self.num_age_classes = 8
             else:
                 self.num_age_classes = 4
-            
             self.num_gender_classes = 2
-            
-            # Create backbone
-            self.backbone = timm.create_model(model_name, pretrained=pretrained, num_classes=0)
-            
-            # Get feature dimensions
-            with torch.no_grad():
-                dummy_input = torch.randn(1, 3, 224, 224)
-                features = self.backbone(dummy_input)
-                self.feature_dim = features.shape[1]
-            
-            # Classification heads
+            model_mapping = {
+                'regnet_1600m': 'regnet_1600m',
+                'regnet_200m': 'regnet_200m',
+                'regnet_400m': 'regnet_400m',
+                'regnet_600m': 'regnet_600m',
+                'regnet_800m': 'regnet_800m',
+                'regnet_3200m': 'regnet_3200m',
+                'regnet_6400m': 'regnet_6400m',
+            }
+            if model_name not in model_mapping:
+                raise ValueError(f"Unsupported model: {model_name}")
+            regnet_key = model_mapping[model_name]
+            full_model = get_regnet(regnet_key, pretrained=pretrained)
+            backbone_modules = []
+            for name, module in full_model.named_children():
+                if name != 'head':
+                    backbone_modules.append(module)
+            self.backbone = nn.Sequential(*backbone_modules)
+            self.feature_dim = REGNET_MODEL_ZOO[regnet_key]['feature_dim'] if regnet_key in REGNET_MODEL_ZOO else 912
+            self._init_heads()
+        def _init_heads(self):
             self.age_head = nn.Sequential(
-                nn.AdaptiveAvgPool2d((1, 1)),
+                nn.AvgPool2d(kernel_size=7, stride=1),
                 nn.Flatten(),
                 nn.Dropout(0.2),
                 nn.Linear(self.feature_dim, 512),
@@ -94,9 +96,8 @@ except ImportError:
                 nn.Dropout(0.2),
                 nn.Linear(512, self.num_age_classes)
             )
-            
             self.gender_head = nn.Sequential(
-                nn.AdaptiveAvgPool2d((1, 1)),
+                nn.AvgPool2d(kernel_size=7, stride=1),
                 nn.Flatten(),
                 nn.Dropout(0.2),
                 nn.Linear(self.feature_dim, 256),
@@ -104,18 +105,14 @@ except ImportError:
                 nn.Dropout(0.2),
                 nn.Linear(256, self.num_gender_classes)
             )
-        
         def forward(self, x):
             features = self.backbone(x)
-            
-            # Handle different feature shapes
-            if len(features.shape) == 2:  # Already flattened
-                age_logits = self.age_head[2:](features)  # Skip pooling and flatten
+            if len(features.shape) == 2:
+                age_logits = self.age_head[2:](features)
                 gender_logits = self.gender_head[2:](features)
-            else:  # [B, C, H, W] format
+            else:
                 age_logits = self.age_head(features)
                 gender_logits = self.gender_head(features)
-            
             return {
                 'age': age_logits,
                 'gender': gender_logits
@@ -129,7 +126,6 @@ class SimpleDataset(Dataset):
         self.data_dir = Path(data_dir)
         self.age_classes = age_classes
         
-        # Define age class mappings
         if age_classes == '4-class':
             self.age_class_names = ['0-9', '10-29', '30-49', '50-70+']
             self.age_ranges = [(0, 9), (10, 29), (30, 49), (50, 120)]
@@ -141,25 +137,21 @@ class SimpleDataset(Dataset):
         
         self.gender_class_names = ['Female', 'Male']
         
-        # Setup transforms
         self.transform = transforms.Compose([
             transforms.Resize((224, 224)),
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            transforms.Normalize(mean=[0.498, 0.498, 0.498], std=[0.498, 0.498, 0.498])
         ])
         
-        # Load dataset
         self.samples = self._load_samples()
     
     def _load_samples(self) -> List[Dict]:
         """Load samples from dataset directory"""
         samples = []
         
-        # Look for CSV file
         csv_files = list(self.data_dir.glob("*.csv"))
         if csv_files:
-            # Load from CSV
-            csv_path = csv_files[0]  # Use first CSV found
+            csv_path = csv_files[0]  
             print(f"Loading dataset from CSV: {csv_path}")
             df = pd.read_csv(csv_path)
             
@@ -170,7 +162,6 @@ class SimpleDataset(Dataset):
             for _, row in df.iterrows():
                 image_path = self.data_dir / row['name']
                 if not image_path.exists():
-                    # Try different path combinations
                     possible_paths = [
                         self.data_dir / 'test' / row['name'],
                         self.data_dir / 'val' / row['name'],
@@ -183,9 +174,8 @@ class SimpleDataset(Dataset):
                             image_path = path
                             break
                     else:
-                        continue  # Skip if image not found
+                        continue 
                 
-                # Convert age to class
                 age_class = self._age_range_to_class(row['age'])
                 gender_class = 0 if row['gender'].lower() in ['female', 'f'] else 1
                 
@@ -198,15 +188,12 @@ class SimpleDataset(Dataset):
                 })
         
         else:
-            # Try to infer from directory structure
             print("No CSV found. Attempting to infer from directory structure...")
             
-            # Look for images in subdirectories
             for split_dir in ['test', 'val', 'train', '.']:
                 split_path = self.data_dir / split_dir if split_dir != '.' else self.data_dir
                 if split_path.exists():
                     for img_path in split_path.glob("*.jpg"):
-                        # Add with unknown labels (will be -1)
                         samples.append({
                             'image_path': str(img_path),
                             'age': -1,  # Unknown
@@ -226,15 +213,13 @@ class SimpleDataset(Dataset):
         for i, (min_age, max_age) in enumerate(self.age_ranges):
             if min_age <= age <= max_age:
                 return i
-        return len(self.age_ranges) - 1  # Default to oldest class
+        return len(self.age_ranges) - 1 
     
     def _age_range_to_class(self, age_str) -> int:
         """Convert age range string (e.g., '10-29') or numerical age to class index"""
-        # Handle string age ranges like "10-29", "0-9", etc.
         if isinstance(age_str, str):
             age_str = str(age_str).strip()
             
-            # Map common age range strings to class indices
             age_range_mapping = {
                 '0-9': 0,
                 '10-29': 1, 
@@ -244,32 +229,26 @@ class SimpleDataset(Dataset):
                 '70+': 3
             }
             
-            # Direct mapping if available
             if age_str in age_range_mapping:
                 return age_range_mapping[age_str]
             
-            # Try to parse range like "10-29"
             if '-' in age_str:
                 try:
                     parts = age_str.split('-')
                     min_age = int(parts[0])
-                    # Use the minimum age to determine class
                     return self._age_to_class(min_age)
                 except:
                     pass
             
-            # Try to parse as single number
             try:
                 age_num = int(age_str)
                 return self._age_to_class(age_num)
             except:
                 pass
         
-        # Handle numerical age
         elif isinstance(age_str, (int, float)):
             return self._age_to_class(int(age_str))
         
-        # Default fallback
         print(f"Warning: Could not parse age '{age_str}', defaulting to class 0")
         return 0
     
@@ -310,7 +289,6 @@ class ModelInference:
         self.weights_path = Path(weights_path)
         self.age_classes = age_classes
         
-        # Setup device
         if device == "auto":
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
@@ -321,11 +299,9 @@ class ModelInference:
         print(f"Weights: {weights_path}")
         print(f"Age classes: {age_classes}")
         
-        # Load model
         self.model = self._load_model()
         self.model.eval()
         
-        # Initialize metrics storage
         self.results = {}
         
     def _load_model(self) -> DualHeadRegNetX:
@@ -335,13 +311,11 @@ class ModelInference:
         
         print(f"Loading weights from: {self.weights_path}")
         
-        # Load checkpoint
         try:
             checkpoint = torch.load(self.weights_path, map_location=self.device)
         except Exception as e:
             raise RuntimeError(f"Failed to load weights: {e}")
         
-        # Determine number of classes based on age scheme
         if self.age_classes == '4-class':
             num_age_classes = 4
         elif self.age_classes == '8-class':
@@ -349,15 +323,13 @@ class ModelInference:
         else:
             num_age_classes = 4
         
-        # Create model
         model = DualHeadRegNetX(
             model_name=self.model_name,
             num_age_classes=num_age_classes,
             num_gender_classes=2,
-            pretrained=False  # Loading trained weights
+            pretrained=False  
         )
         
-        # Load state dict
         try:
             if 'model_state_dict' in checkpoint:
                 model.load_state_dict(checkpoint['model_state_dict'])
@@ -378,14 +350,12 @@ class ModelInference:
     def _create_dataloader(self, dataset_path: str, batch_size: int = 32, 
                           num_workers: int = 4) -> Tuple[DataLoader, List[str], List[str]]:
         """Create dataloader for inference dataset"""
-        # Create dataset
         dataset = SimpleDataset(dataset_path, self.age_classes)
         
-        # Create dataloader
         dataloader = DataLoader(
             dataset,
             batch_size=batch_size,
-            shuffle=False,  # Maintain order for analysis
+            shuffle=False,  
             num_workers=num_workers,
             pin_memory=True if self.device.type == 'cuda' else False
         )
@@ -395,7 +365,6 @@ class ModelInference:
     def _calculate_metrics(self, y_true: np.ndarray, y_pred: np.ndarray, 
                           class_names: List[str], task: str) -> Dict[str, Any]:
         """Calculate comprehensive classification metrics"""
-        # Filter out unknown labels (-1)
         valid_mask = (y_true >= 0) & (y_pred >= 0)
         if not np.any(valid_mask):
             print(f"Warning: No valid labels found for {task} classification")
@@ -413,10 +382,8 @@ class ModelInference:
         accuracy = accuracy_score(y_true_filtered, y_pred_filtered)
         f1 = f1_score(y_true_filtered, y_pred_filtered, average='weighted', zero_division=0)
         
-        # Confusion matrix
         cm = confusion_matrix(y_true_filtered, y_pred_filtered, labels=range(len(class_names)))
         
-        # Classification report
         report = classification_report(y_true_filtered, y_pred_filtered, 
                                      target_names=class_names, 
                                      output_dict=True, zero_division=0)
@@ -439,10 +406,8 @@ class ModelInference:
             
         plt.figure(figsize=(10, 8))
         
-        # Normalize confusion matrix
         cm_normalized = cm.astype('float') / (cm.sum(axis=1)[:, np.newaxis] + 1e-8)
         
-        # Create heatmap
         sns.heatmap(cm_normalized, 
                    annot=True, 
                    fmt='.3f', 
@@ -456,7 +421,6 @@ class ModelInference:
         plt.ylabel('Actual')
         plt.tight_layout()
         
-        # Save plot
         output_path = output_dir / f'confusion_matrix_{task}.png'
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         plt.close()
@@ -488,12 +452,10 @@ class ModelInference:
         print(f"Batch size: {batch_size}")
         print(f"{'='*60}\n")
         
-        # Create output directory
         if output_dir:
             output_dir = Path(output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Create dataloader
         dataloader, age_classes, gender_classes = self._create_dataloader(
             dataset_path, batch_size, num_workers
         )
@@ -502,7 +464,6 @@ class ModelInference:
         print(f"Age classes: {age_classes}")
         print(f"Gender classes: {gender_classes}")
         
-        # Initialize containers
         all_age_preds = []
         all_gender_preds = []
         all_age_targets = []
@@ -510,51 +471,41 @@ class ModelInference:
         all_image_paths = []
         all_predictions_data = []
         
-        # Timing
         inference_times = []
         total_start_time = time.time()
         
-        # Run inference
         print("\nRunning inference...")
         self.model.eval()
         
         with torch.no_grad():
             for batch_idx, batch in enumerate(tqdm(dataloader, desc="Processing batches")):
-                # Time individual batch
                 batch_start_time = time.time()
                 
-                # Forward pass
                 images = batch['image'].to(self.device)
                 age_labels = batch['age']
                 gender_labels = batch['gender']
                 
                 outputs = self.model(images)
                 
-                # Get predictions
                 age_pred = torch.argmax(outputs['age'], dim=1).cpu().numpy()
                 gender_pred = torch.argmax(outputs['gender'], dim=1).cpu().numpy()
                 
-                # Get probabilities for detailed analysis
                 age_probs = torch.softmax(outputs['age'], dim=1).cpu().numpy()
                 gender_probs = torch.softmax(outputs['gender'], dim=1).cpu().numpy()
 
-                # Calculate entropy for each prediction
                 def entropy(probs):
-                    # Add small epsilon to avoid log(0)
                     eps = 1e-8
                     return -np.sum(probs * np.log(probs + eps), axis=1)
 
                 age_entropy = entropy(age_probs)
                 gender_entropy = entropy(gender_probs)
 
-                # Store results
                 all_age_preds.extend(age_pred)
                 all_gender_preds.extend(gender_pred)
                 all_age_targets.extend(age_labels.numpy())
                 all_gender_targets.extend(gender_labels.numpy())
                 all_image_paths.extend(batch['image_path'])
 
-                # Store detailed predictions if requested
                 if save_predictions:
                     for i in range(len(age_pred)):
                         all_predictions_data.append({
@@ -569,19 +520,16 @@ class ModelInference:
                             'gender_entropy': float(gender_entropy[i])
                         })
 
-                # Record timing
                 batch_time = time.time() - batch_start_time
                 inference_times.append(batch_time)
         
         total_time = time.time() - total_start_time
         
-        # Convert to numpy arrays
         all_age_preds = np.array(all_age_preds)
         all_gender_preds = np.array(all_gender_preds)
         all_age_targets = np.array(all_age_targets)
         all_gender_targets = np.array(all_gender_targets)
         
-        # Calculate metrics
         print("\nCalculating metrics...")
         
         age_metrics = self._calculate_metrics(
@@ -591,13 +539,11 @@ class ModelInference:
             all_gender_targets, all_gender_preds, gender_classes, 'gender'
         )
         
-        # Calculate FPS
         total_samples = len(all_age_preds)
         avg_batch_time = np.mean(inference_times)
         fps = batch_size / avg_batch_time
         overall_fps = total_samples / total_time
         
-        # Compile results
         results = {
             'model_info': {
                 'model_name': self.model_name,
@@ -624,14 +570,11 @@ class ModelInference:
             }
         }
         
-        # Add predictions if saved
         if save_predictions:
             results['predictions'] = all_predictions_data
         
-        # Print results
         self._print_results(results)
         
-        # Save results if output directory specified
         if output_dir:
             self._save_results(results, output_dir, age_classes, gender_classes, save_predictions)
         
@@ -643,32 +586,27 @@ class ModelInference:
         print(f"INFERENCE RESULTS")
         print(f"{'='*60}")
 
-        # Model info
         model_info = results['model_info']
         print(f"Model: {model_info['model_name']}")
         print(f"Parameters: {model_info['total_parameters']:,}")
         print(f"Age Classes: {len(model_info['age_classes'])}")
         print(f"Gender Classes: {len(model_info['gender_classes'])}")
 
-        # Dataset info
         dataset_info = results['dataset_info']
         print(f"\nDataset: {dataset_info['total_samples']} samples")
         print(f"Valid age labels: {dataset_info['valid_age_samples']}")
         print(f"Valid gender labels: {dataset_info['valid_gender_samples']}")
 
-        # Age metrics
         age_metrics = results['age_metrics']
         print(f"\nAge Classification:")
         print(f"  Accuracy: {age_metrics['accuracy']:.4f} ({age_metrics['accuracy']*100:.2f}%)")
         print(f"  F1 Score: {age_metrics['f1_weighted']:.4f}")
 
-        # Gender metrics
         gender_metrics = results['gender_metrics']
         print(f"\nGender Classification:")
         print(f"  Accuracy: {gender_metrics['accuracy']:.4f} ({gender_metrics['accuracy']*100:.2f}%)")
         print(f"  F1 Score: {gender_metrics['f1_weighted']:.4f}")
 
-        # Performance
         performance = results['performance']
         print(f"\nPerformance:")
         print(f"  Total Time: {performance['total_inference_time']:.2f}s")
@@ -677,7 +615,6 @@ class ModelInference:
 
         print(f"{'='*60}")
 
-        # Gender-Age Intersectional Accuracy
         if 'predictions' in results:
             try:
                 import pandas as pd
@@ -700,7 +637,6 @@ class ModelInference:
         """Save all results to files"""
         print(f"\nSaving results to: {output_dir}")
         
-        # Save confusion matrices
         self._save_confusion_matrix(
             results['age_metrics']['confusion_matrix'],
             age_classes,
@@ -717,7 +653,6 @@ class ModelInference:
             results['gender_metrics']['accuracy']
         )
         
-        # Save detailed results as JSON
         results_path = output_dir / 'inference_results.json'
         json_results = self._prepare_for_json(results)
         
@@ -726,7 +661,6 @@ class ModelInference:
         
         print(f"Saved detailed results: {results_path}")
         
-        # Save summary CSV
         summary_path = output_dir / 'inference_summary.csv'
         summary_data = {
             'Model': [results['model_info']['model_name']],
@@ -744,7 +678,6 @@ class ModelInference:
         
         print(f"Saved summary: {summary_path}")
         
-        # Save individual predictions if requested
         if save_predictions and 'predictions' in results:
             predictions_path = output_dir / 'predictions.csv'
             predictions_df = pd.DataFrame(results['predictions'])
@@ -786,15 +719,12 @@ Examples:
         """
     )
     
-    # Required arguments
     parser.add_argument('--model', type=str, required=True,
                         help='RegNetX model name (e.g., regnetx_016, regnetx_008)')
     parser.add_argument('--weights', type=str, required=True,
                         help='Path to trained model weights (.pth file)')
     parser.add_argument('--dataset', type=str, required=True,
-                        help='Path to dataset directory')
-    
-    # Optional arguments
+                        help='Path to dataset directory')    
     parser.add_argument('--age-classes', type=str, choices=['4-class', '8-class'], 
                         default='4-class', help='Age classification scheme')
     parser.add_argument('--output', type=str, default=None,
@@ -810,7 +740,6 @@ Examples:
     
     args = parser.parse_args()
     
-    # Validate inputs
     if not os.path.exists(args.weights):
         print(f"❌ Error: Weights file not found: {args.weights}")
         return 1
@@ -819,13 +748,11 @@ Examples:
         print(f"❌ Error: Dataset directory not found: {args.dataset}")
         return 1
     
-    # Set default output directory
     if args.output is None:
         model_name = Path(args.weights).stem
         args.output = f"inference_results/{model_name}"
     
     try:
-        # Create inference engine
         inference = ModelInference(
             model_name=args.model,
             weights_path=args.weights,
@@ -833,7 +760,6 @@ Examples:
             device=args.device
         )
         
-        # Run inference
         results = inference.run_inference(
             dataset_path=args.dataset,
             output_dir=args.output,

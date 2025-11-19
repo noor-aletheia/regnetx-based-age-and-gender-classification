@@ -1,23 +1,23 @@
 dataset:
-  path: "/app/mixed_data_v2"
-  batch_size: 64
+  path: "/app/expanded_merged_dataset"
+  batch_size: 32
   num_workers: 4
-  age_class_scheme: "8-class"
+  age_class_scheme: "4-class"
 
 models:
-  variants: ["regnetx_006", "regnetx_008", "regnetx_016"]
+  variants: ["regnet_200m", "regnet_400m", "regnet_600m", "regnet_800m", "regnet_1600m", "regnet_3200m", "regnet_4000m", "regnet_6400m"]
   pretrained: true
 training:
   phase1:
     epochs: 20
     learning_rate: 1e-3
     weight_decay: 1e-4
-    patience: 6
+    patience: 8
   phase2:
     epochs: 40
-    learning_rate: 1.5e-4
-    weight_decay: 5e-4
-    patience: 15
+    learning_rate: 5e-4
+    weight_decay: 1e-5
+    patience: 20
   loss_type: "focal"
   
   optimizer: "AdamW"
@@ -25,10 +25,10 @@ training:
   scheduler_params:
     T_max: 40
     eta_min: 1e-6
-  age_loss_weight: 1.0
+  age_loss_weight: 1.5
   gender_loss_weight: 1.0
-  class_weight_mode: "default"
-  class_weight_power_alpha: 1.0
+  class_weight_mode: "power"
+  class_weight_power_alpha: 2.0
   loss_weights:
     age: null
     gender: null
@@ -36,11 +36,9 @@ training:
 augmentation:
   presets:
     strong:
-      # Spatial augmentations
       at_least_one_bbox_random_crop: 0.3
       d4_transform: 0.2
       
-      # Blur effects (light intensity for face recognition)
       gaussian_blur:
         prob: 0.15
         blur_limit: [1, 3]
@@ -51,7 +49,6 @@ augmentation:
         prob: 0.1
         blur_limit: [3, 5]
       
-      # Noise and quality degradation
       gaussian_noise:
         prob: 0.15
         var_limit: [10, 30]
@@ -59,19 +56,16 @@ augmentation:
         prob: 0.1
         scale_range: [0.7, 0.9]
       
-      # Enhancement and color manipulation
       clahe:
         prob: 0.2
         clip_limit: [1, 2]
       to_gray:
         prob: 0.05
       
-      # Geometric distortion
       grid_distortion:
         prob: 0.15
         distort_limit: 0.1
       
-      # Standard augmentations (reduced since pre-augmented)
       rotation: 10
       color_jitter:
         brightness: 0.2
@@ -95,12 +89,12 @@ augmentation:
     age: strong
     gender: strong
     normalize:
-      mean: [0.485, 0.456, 0.406]
-      std: [0.229, 0.224, 0.225]
+      mean: [0.498, 0.498, 0.498]
+      std: [0.498, 0.498, 0.498]
   val_test:
     normalize:
-      mean: [0.485, 0.456, 0.406]
-      std: [0.229, 0.224, 0.225]
+      mean: [0.498, 0.498, 0.498]
+      std: [0.498, 0.498, 0.498]
 
 output:
   models_dir: "/outputs/models"
@@ -121,6 +115,3 @@ logging:
   log_level: "INFO"
   enable_tensorboard: true
   save_checkpoint_every: 5
-  simplify_onnx: true
-  onnx_use_overall_similarity: true
-  onnx_dynamic_axes: false  

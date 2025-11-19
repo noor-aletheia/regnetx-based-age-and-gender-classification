@@ -1,41 +1,47 @@
 # RegNetX-Based Age and Gender Classification
 
-A comprehensive PyTorch pipeline for age and gender classification from face images using RegNetX models. Features advanced data augmentation, two-phase training, Docker containerization, and robust ONNX export capabilities.
+## 📝 Repository Structure
 
-## 🎯 Key Features
+| File/Folder         | Description |
+|---------------------|-------------|
+| `src/`              | Source code for models, training, logger, and utilities |
+| `train_cli.py`      | Main CLI script for training models |
+| `train_cli.sh`      | Bash script for launching training with arguments |
+| `inference.py`      | Script for running inference and evaluation |
+| `export.py`         | Script for ONNX export and model conversion |
+| `regnet.py`         | RegNetX backbone model definitions |
+| `reglayers.py`      | Custom layers and wrappers for RegNetX |
+| `regnet_weights/`   | Pretrained RegNet weights (downloaded from upstream) |
+| `outputs/`          | Output directory for models, logs, and tensorboard |
+| `config.yaml`       | Main configuration file for experiments |
+| `Dockerfile`        | Docker build instructions for reproducible environment |
+| `requirements.txt`  | Python dependencies for the project |
+| `quantize/`         | Scripts and outputs for model quantization and deployment |
 
-- **Dual-Head RegNetX Architecture**: Simultaneous age and gender prediction
-- **Advanced Data Pipeline**: Pre-augmentation + runtime augmentation hybrid approach  
-- **Two-Phase Training**: Efficient frozen backbone → full fine-tuning methodology
-- **Production-Ready**: Docker containerization with GPU acceleration
-- **Robust Export**: Optimized ONNX conversion with similarity verification
-- **Comprehensive Monitoring**: TensorBoard integration and detailed metrics
 
-## 📊 Dataset Pipeline
+## 📥 Input Format
 
-### 1. Dataset Structure
+- **Image Input:** All images should be RGB, 224x224 pixels, normalized with mean = [0.498, 0.498, 0.498] and std = [0.498, 0.498, 0.498].
+- **CSV Labels:** The main CSV file (e.g., `groundtruth.csv`) should have columns: `name`, `age`, `gender`, `path`.
+  - `name`: Image filename
+  - `age`: Integer age or age class/range
+  - `gender`: 'male' or 'female'
+  - `path`: Relative or absolute path to image (optional if images are in standard folders)
+
+
+## 📂 Dataset Structure
+
 ```
 expanded_merged_dataset/
-├── train/           # ~97K images (pre-augmented + merged datasets)
-├── val/             # ~12K images  
-├── test/            # ~12K images![alt text](image.png)
-└── groundtruth.csv  # Unified labels: name,age,gender,path
+├── train/           # Training images 
+├── val/             # Validation images
+├── test/            # Test images
+└── groundtruth.csv  # Unified labels: name, age, gender, path
 ```
 
-### 2. Hybrid Augmentation Strategy
-- **Pre-Augmentation**: Small custom datasets expanded 6x before merging
-- **Runtime Augmentation**: 9 advanced techniques applied during training
-  - Spatial: BBox crops, D4 transforms, grid distortion
-  - Quality: Gaussian/motion blur, noise, downscaling  
-  - Enhancement: CLAHE, grayscale conversion
-  - Standard: Rotation, color jitter, flip, crop, erasing
+- `train/`, `val/`, `test/`: Folders containing images for each split.
+- `groundtruth.csv`: CSV file with unified labels for all images.
 
-## 🚀 Quick Start
-
-### Prerequisites
-- Docker with NVIDIA GPU support
-- ~8GB GPU memory for batch size 64
-- CUDA-compatible GPU recommended
 
 ### Build Docker Image
 ```bash
@@ -83,45 +89,54 @@ docker run -d --gpus all \
 
 ### Monitoring Training
 ```bash
-# Check container status
-docker ps
-
 # View live training logs  
 docker logs -f regnetx_training
-
-# Monitor GPU usage
-docker exec regnetx_training nvidia-smi
 
 # Access container
 docker exec -it regnetx_training bash
 ```
 
-## 🏗️ Model Architecture
+## 🔗 RegNet Weights and Backbone source
+
+The RegNet weights used in this project were obtained from:
+https://github.com/yhhhli/RegNet-Pytorch/tree/master/ImageNet/models
+
+
+## 🧠 Model Architecture
+
+- **Dual-Head Output:** The RegNetX backbone is extended with two classification heads:
+  - **Age Head:** Outputs logits for age classes (4 or 8 classes, configurable)
+  - **Gender Head:** Outputs logits for gender (2 classes: male, female)
+  - Both heads are trained jointly for multi-task learning, improving overall performance.
 
 ### Available Models
-| Model | Parameters | GFLOPs | Description |
-|-------|-----------|---------|-------------|
-| `regnetx_006` | 6.5M | 0.6 | Lightweight, fast inference |
-| `regnetx_008` | 7.5M | 0.8 | Balanced performance |
-| `regnetx_016` | 9.5M | 1.6 | Best accuracy (recommended) |
+| Model         | Parameters | Description |
+|---------------|------------|-------------|
+| `regnet_200m` | 2.7M       | Smallest, fastest |
+| `regnet_400m` | 4.2M       | Small, fast |
+| `regnet_600m` | 6.2M       | Small, balanced |
+| `regnet_800m` | 7.3M       | Small, balanced |
+| `regnet_1600m`| 9.2M       | Medium, best trade-off |
+| `regnet_3200m`| 15.3M      | Medium-large |
+| `regnet_4000m`| 20.6M      | Large |
+| `regnet_6400m`| 25.5M      | Largest, highest accuracy |
 
 ### Age Classification Schemes
 - **4-class**: 0-9, 10-29, 30-49, 50-70+ years (recommended)
-- **8-class**: More granular age groups
+- **8-class**: 0-9, 10-19, 20-29, 30-39, 40-49, 50-59, 60-69, 70+
 
 ## 📋 Output Files
 
 ```
 outputs/
-├── models/regnetx_16_advanced_aug/
-│   ├── regnetx_016_best.pth          # Best PyTorch model
-│   ├── regnetx_016_simplified.onnx   # FP32 ONNX
-│   └── regnetx_016_fp16.onnx        # FP16 ONNX
-├── logs/regnetx_16_advanced_aug/
+├── models/<experiment_name>/
+│   ├── <model_name>_best.pth          # Best PyTorch model
+│   └── <model_name>.onnx   # Simplified ONNX with preprocessing
+├── logs/<experiment_name>/
 │   ├── training_curves.png           # Loss/accuracy plots
 │   ├── confusion_matrix_age.png      # Age classification matrix
 │   ├── confusion_matrix_gender.png   # Gender classification matrix
 │   ├── training_history.csv         # Epoch-by-epoch metrics
 │   └── comprehensive_training_results.csv
-└── tensorboard/regnetx_16_advanced_aug/  # TensorBoard logs
+└── tensorboard/<experiment_name>/  # TensorBoard logs
 ```

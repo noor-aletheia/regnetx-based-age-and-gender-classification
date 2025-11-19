@@ -27,6 +27,8 @@ def parse_arguments():
         description='RegNetX Age & Gender Classification Training',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
+    parser.add_argument('--pause-between-models', type=int, default=0,
+                       help='Pause (in seconds) between training each model (default: 0, no pause)')
     parser.add_argument('--model', '--models', nargs='*', 
                        help='Model(s) to train. If not specified, trains all models from config.')
     parser.add_argument('--list-models', action='store_true',
@@ -86,10 +88,7 @@ def parse_arguments():
     
     parser.add_argument('--age-classes', choices=['8-class', '4-class'], default='8-class',
                         help='Age classification scheme: 8-class (original) or 4-class (0-9, 10-29, 30-49, 50-70+)')
-    
-    parser.add_argument('--onnx-dynamic-axes', action='store_true',
-                        help='Enable dynamic batch size for ONNX export (allows variable batch sizes)')
-    
+     
     return parser.parse_args()
 
 def create_runtime_config(args, base_config_path: str) -> Config:
@@ -183,10 +182,6 @@ def create_runtime_config(args, base_config_path: str) -> Config:
     
     config.set('dataset.age_class_scheme', args.age_classes)
     
-    if args.onnx_dynamic_axes:
-        config.set('logging.onnx_dynamic_axes', True)
-        logger.info("ONNX dynamic axes enabled for export")
-    
     return config
 
 def determine_models_to_train(args, config: Config) -> List[str]:
@@ -203,7 +198,9 @@ def determine_models_to_train(args, config: Config) -> List[str]:
         
         return args.model
     else:
-        return config.get('models.variants', ['regnetx_008'])
+        return config.get('models.variants', [
+            'regnet_200m', 'regnet_400m', 'regnet_600m', 'regnet_800m',
+            'regnet_1600m', 'regnet_3200m', 'regnet_4000m', 'regnet_6400m'])
 
 def print_training_summary(config: Config, models_to_train: List[str]):
     """Print training configuration summary"""
@@ -242,12 +239,11 @@ def main():
     
     if args.list_models:
         logger.info("Available models:")
-        ModelFactory.list_available_models()
-        
+        logger.info("  regnet_200m, regnet_400m, regnet_600m, regnet_800m, regnet_1600m, regnet_3200m, regnet_4000m, regnet_6400m")
         logger.info("\nRecommended RegNetX models by size:")
-        logger.info("  Small  (~6M params): regnetx_006")
-        logger.info("  Medium (~8M params): regnetx_008")
-        logger.info("  Large  (~16M params): regnetx_016")
+        logger.info("  Small  (~0.2-0.8M params): regnet_200m, regnet_400m, regnet_600m, regnet_800m")
+        logger.info("  Medium (~1.6-3.2M params): regnet_1600m, regnet_3200m")
+        logger.info("  Large  (~4.0-6.4M params): regnet_4000m, regnet_6400m")
         return
     
     logger.info("Loading configuration...")
@@ -278,11 +274,12 @@ def main():
     successful_models = 0
     total_training_time = 0
     
+    import time
     for i, model_name in enumerate(models_to_train, 1):
         logger.info(f"\n{'='*60}")
         logger.info(f"TRAINING MODEL {i}/{len(models_to_train)}: {model_name.upper()}")
         logger.info(f"{'='*60}")
-        
+
         try:
             from src.train import train_single_model
             result = train_single_model(
@@ -291,19 +288,24 @@ def main():
                 data_processor=data_processor,
                 results_aggregator=results_aggregator
             )
-            
+
             if result['success']:
                 successful_models += 1
                 total_training_time += result['training_time']
                 logger.info(f"✅ {model_name} completed successfully!")
             else:
                 logger.error(f"❌ {model_name} failed: {result.get('error', 'Unknown error')}")
-                
+
         except KeyboardInterrupt:
             logger.info("Training interrupted by user")
             break
         except Exception as e:
             logger.error(f"❌ Error training {model_name}: {e}")
+
+        # Pause between models if requested
+        if args.pause_between_models and i < len(models_to_train):
+            logger.info(f"Pausing for {args.pause_between_models} seconds before next model...")
+            time.sleep(args.pause_between_models)
     
     if successful_models > 0:
         results_aggregator.save_comparison_table()

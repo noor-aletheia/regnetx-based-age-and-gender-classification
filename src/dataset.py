@@ -297,9 +297,7 @@ class DataProcessor:
         self.train_data, self.val_data, self.test_data = self._load_data_from_folders()
         
 
-        self.image_size = self._detect_image_dimensions()
-        
-
+        self.image_size = 224
         self.config.set('dataset.detected_image_size', self.image_size)
         logger.info(f"Using image size: {self.image_size}x{self.image_size}")
         
@@ -314,7 +312,7 @@ class DataProcessor:
 
             csv_candidates = [
                 'groundtruth.csv',
-                f'{split_name}_groundtruth.csv',  # train_groundtruth.csv, val_groundtruth.csv
+                f'{split_name}_groundtruth.csv',
                 f'{split_name}.csv'
             ]
             
@@ -417,29 +415,6 @@ class DataProcessor:
         
         return valid_data
     
-    def _detect_image_dimensions(self) -> int:
-        """Detect common image dimensions from dataset"""
-
-        sample_images = []
-        for _, row in self.train_data.head(50).iterrows():
-            image_path = os.path.join(row['split_dir'], row['image'])
-            sample_images.append(image_path)
-        
-        common_width, common_height = ImageDimensionDetector.detect_common_dimensions(sample_images)
-        
-
-        target_size = max(common_width, common_height)
-        
-
-        if target_size <= 128:
-            return 224
-        elif target_size <= 256:
-            return 256
-        elif target_size <= 384:
-            return 384
-        else:
-            return 512
-    
     def _print_split_statistics(self, data: pd.DataFrame, split_name: str):
         """Print statistics for a data split"""
         logger.info(f"\n=== {split_name.upper()} Split Statistics ===")
@@ -462,8 +437,8 @@ class DataProcessor:
         """Create image transforms for train, validation, and test sets, using presets for age/gender"""
         presets = self.config.get('augmentation.presets', {})
         train_cfg = self.config.get('augmentation.train', {})
-        mean = train_cfg.get('normalize', {}).get('mean', [0.485, 0.456, 0.406])
-        std = train_cfg.get('normalize', {}).get('std', [0.229, 0.224, 0.225])
+        mean = train_cfg.get('normalize', {}).get('mean', [127/255, 127/225, 127/225])
+        std = train_cfg.get('normalize', {}).get('std', [127/255, 127/225, 127/225])
 
         def build_transform(preset_name):
             preset = presets.get(preset_name, {})
@@ -499,8 +474,8 @@ class DataProcessor:
         train_transform = age_transform
 
         val_test_cfg = self.config.get('augmentation.val_test', {})
-        val_mean = val_test_cfg.get('normalize', {}).get('mean', [0.485, 0.456, 0.406])
-        val_std = val_test_cfg.get('normalize', {}).get('std', [0.229, 0.224, 0.225])
+        val_mean = val_test_cfg.get('normalize', {}).get('mean', [127/255, 127/225, 127/225])
+        val_std = val_test_cfg.get('normalize', {}).get('std', [127/255, 127/225, 127/225])
         val_test_transforms = [
             transforms.Resize((self.image_size, self.image_size)),
             transforms.ToTensor(),

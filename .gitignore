@@ -52,6 +52,10 @@ drama/
 drama_augmented/
 expanded_merged_dataset/
 mixed_data/
-
-# Docker
-docker-compose.yml
+batbox_dataset/
+inference_results/
+helper/
+rknn_models/
+regnet_weights/
+snapshots/
+performance_matrix.ods

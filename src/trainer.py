@@ -540,18 +540,27 @@ class TwoPhaseTrainer:
         gender_predictions = []
         age_targets = []
         gender_targets = []
+
+        # --- FPS calculation: start timing ---
+        inference_times = []
+        total_start_time = time.time()
         
         with torch.no_grad():
             for batch in test_loader:
+                batch_start_time = time.time()
                 outputs, _, _, _ = self._forward_pass(batch)
-                
+                batch_time = time.time() - batch_start_time
+                inference_times.append(batch_time)
+
                 age_pred = torch.argmax(outputs['age'], dim=1).cpu().numpy()
                 gender_pred = torch.argmax(outputs['gender'], dim=1).cpu().numpy()
-                
+
                 age_predictions.extend(age_pred)
                 gender_predictions.extend(gender_pred)
                 age_targets.extend(batch['age'].cpu().numpy())
                 gender_targets.extend(batch['gender'].cpu().numpy())
+
+        total_time = time.time() - total_start_time
         
         age_targets = np.array(age_targets)
         age_predictions = np.array(age_predictions)
@@ -575,9 +584,24 @@ class TwoPhaseTrainer:
             gender_targets, gender_predictions, gender_class_names, 'gender'
         )
         if save_confusion_matrix:
-            output_dir = self.config.get('output.logs_dir', './outputs/logs')
-            
-            age_cm_path = os.path.join(output_dir, 'confusion_matrix_age.png')
+            # Try to use the same directory as training curves/history (logger directory)
+            # Fallback to output.logs_dir/model_name if not available
+            log_dir = getattr(self, 'logger_dir', None)
+            if log_dir is None:
+                output_dir = self.config.get('output.logs_dir', './outputs/logs')
+                model_name = getattr(self.model, 'model_name', None)
+                if not model_name:
+                    model_name = self.config.get('experiment.model_name', None)
+                if not model_name:
+                    model_name = self.config.get('experiment_name', 'model')
+                log_dir = os.path.join(output_dir, str(model_name))
+            os.makedirs(log_dir, exist_ok=True)
+            model_name = getattr(self.model, 'model_name', None)
+            if not model_name:
+                model_name = self.config.get('experiment.model_name', None)
+            if not model_name:
+                model_name = self.config.get('experiment_name', 'model')
+            age_cm_path = os.path.join(log_dir, f'confusion_matrix_age_{model_name}.png')
             self.metrics_calculator.save_confusion_matrix(
                 age_metrics['confusion_matrix'], 
                 age_class_names, 
@@ -585,8 +609,7 @@ class TwoPhaseTrainer:
                 age_cm_path,
                 f'Age Classification Confusion Matrix (Acc: {age_metrics["accuracy"]:.3f})'
             )
-            
-            gender_cm_path = os.path.join(output_dir, 'confusion_matrix_gender.png')
+            gender_cm_path = os.path.join(log_dir, f'confusion_matrix_gender_{model_name}.png')
             self.metrics_calculator.save_confusion_matrix(
                 gender_metrics['confusion_matrix'], 
                 gender_class_names, 
@@ -595,6 +618,12 @@ class TwoPhaseTrainer:
                 f'Gender Classification Confusion Matrix (Acc: {gender_metrics["accuracy"]:.3f})'
             )
         
+        # --- FPS calculation ---
+        total_samples = len(age_predictions)
+        avg_batch_time = np.mean(inference_times) if inference_times else 0.0
+        fps = test_loader.batch_size / avg_batch_time if avg_batch_time > 0 else 0.0
+        overall_fps = total_samples / total_time if total_time > 0 else 0.0
+
         test_results = {
             'age_metrics': age_metrics,
             'gender_metrics': gender_metrics,
@@ -603,11 +632,19 @@ class TwoPhaseTrainer:
             'age_predictions': age_predictions.tolist(),
             'gender_predictions': gender_predictions.tolist(),
             'age_targets': age_targets.tolist(),
-            'gender_targets': gender_targets.tolist()
+            'gender_targets': gender_targets.tolist(),
+            'performance': {
+                'total_inference_time': total_time,
+                'avg_batch_time': avg_batch_time,
+                'fps_per_batch': fps,
+                'overall_fps': overall_fps,
+                'samples_per_second': overall_fps
+            }
         }
-        
+
         logger.info("=== Test Results ===")
         logger.info(f"Age - Accuracy: {age_metrics['accuracy']:.4f}, Precision: {age_metrics['precision']:.4f}, Recall: {age_metrics['recall']:.4f}, F1: {age_metrics['f1']:.4f}")
         logger.info(f"Gender - Accuracy: {gender_metrics['accuracy']:.4f}, Precision: {gender_metrics['precision']:.4f}, Recall: {gender_metrics['recall']:.4f}, F1: {gender_metrics['f1']:.4f}")
+        logger.info(f"Test set FPS: {overall_fps:.2f} samples/second, Total inference time: {total_time:.2f}s, Avg batch time: {avg_batch_time:.4f}s")
         
         return test_results
