@@ -1,6 +1,6 @@
 # RegNetX-Based Age and Gender Classification
 
-## 📝 Repository Structure
+## Repository Structure
 
 | File/Folder         | Description |
 |---------------------|-------------|
@@ -19,7 +19,7 @@
 | `quantize/`         | Scripts and outputs for model quantization and deployment |
 
 
-## 📥 Input Format
+## Input Format
 
 - **Image Input:** All images should be RGB, 224x224 pixels, normalized with mean = [0.498, 0.498, 0.498] and std = [0.498, 0.498, 0.498].
 - **CSV Labels:** The main CSV file (e.g., `groundtruth.csv`) should have columns: `name`, `age`, `gender`, `path`.
@@ -29,7 +29,7 @@
   - `path`: Relative or absolute path to image (optional if images are in standard folders)
 
 
-## 📂 Dataset Structure
+## Dataset Structure
 
 ```
 expanded_merged_dataset/
@@ -75,7 +75,7 @@ docker run -d --gpus all \
   --experiment-name regnetx_16_advanced_aug
 ```
 
-## 📈 Training Workflow
+## Training Workflow
 
 ### Phase 1: Frozen Backbone (10 epochs)
 - **Learning Rate**: 1e-3 (fast head adaptation)
@@ -96,13 +96,13 @@ docker logs -f regnetx_training
 docker exec -it regnetx_training bash
 ```
 
-## 🔗 RegNet Weights and Backbone source
+## RegNet Weights and Backbone source
 
 The RegNet weights used in this project were obtained from:
 https://github.com/yhhhli/RegNet-Pytorch/tree/master/ImageNet/models
 
 
-## 🧠 Model Architecture
+## Model Architecture
 
 - **Dual-Head Output:** The RegNetX backbone is extended with two classification heads:
   - **Age Head:** Outputs logits for age classes (4 or 8 classes, configurable)
@@ -125,7 +125,7 @@ https://github.com/yhhhli/RegNet-Pytorch/tree/master/ImageNet/models
 - **4-class**: 0-9, 10-29, 30-49, 50-70+ years (recommended)
 - **8-class**: 0-9, 10-19, 20-29, 30-39, 40-49, 50-59, 60-69, 70+
 
-## 📋 Output Files
+## Output Files
 
 ```
 outputs/
