@@ -59,3 +59,8 @@ rknn_models/
 regnet_weights/
 snapshots/
 performance_matrix.ods
+
+# Temporary files
+summary.txt
+quantize/summary.txt
+quantize/img_*.jpg

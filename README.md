@@ -21,7 +21,7 @@
 
 ## Input Format
 
-- **Image Input:** All images should be RGB, 224x224 pixels, normalized with mean = [0.498, 0.498, 0.498] and std = [0.498, 0.498, 0.498].
+- **Image Input:** All images should be RGB, 224x224 pixels, normalized with mean = [0.5, 0.5, 0.5] and std = [0.5, 0.5, 0.5].
 - **CSV Labels:** The main CSV file (e.g., `groundtruth.csv`) should have columns: `name`, `age`, `gender`, `path`.
   - `name`: Image filename
   - `age`: Integer age or age class/range
@@ -66,11 +66,8 @@ docker run -d --gpus all \
   --lr2 1.5e-4 \
   --batch-size 64 \
   --weight-decay 1e-4 \
-  --phase1-patience 6 \
-  --phase2-patience 15 \
   --class_weight_mode power \
   --class_weight_power_alpha 2.0 \
-  --augmentation-strength strong \
   --mixed-precision \
   --experiment-name regnetx_16_advanced_aug
 ```
