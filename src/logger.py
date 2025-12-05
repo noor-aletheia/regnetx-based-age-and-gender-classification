@@ -28,9 +28,7 @@ class TrainingLogger:
         self.config = config
         self.model_name = model_name
         base_logs_dir = config.get('output.logs_dir')
-        # Use experiment.model_name if set (for correct naming in multi-model runs)
         model_dir_name = config.get('experiment.model_name', model_name)
-        # Only create per-model subdir for logs_dir, not for models_dir or tensorboard_dir
         models_list = config.get('models.variants', [])
         if isinstance(models_list, list) and len(models_list) > 1:
             self.logs_dir = os.path.join(base_logs_dir, model_dir_name)
@@ -46,7 +44,6 @@ class TrainingLogger:
         if self.config.get('logging.enable_tensorboard', True):
             tb_base = self.config.get('output.tensorboard_dir', '/outputs/tensorboard')
             experiment = experiment_name or self.config.get('experiment_name', 'default_exp')
-            # Do NOT add per-model subdir for tensorboard, keep as experiment/model_name
             tb_dir = os.path.join(tb_base, experiment, model_name)
             os.makedirs(tb_dir, exist_ok=True)
             self.tb_writer = SummaryWriter(log_dir=tb_dir)
@@ -279,7 +276,7 @@ class ResultsAggregator:
             'Model': model_name,
             'Phase 1 Epochs': training_config.get('phase1_epochs', 0),
             'Phase 2 Epochs': training_config.get('phase2_epochs', 0), 
-            'Augmentation': training_config.get('augmentation_preset', 'unknown'),
+            'Augmentation': str(training_config.get('augmentation_mode', {})),
             'LR (P1/P2)': f"{float(training_config.get('phase1_lr', 0)):.0e}/{float(training_config.get('phase2_lr', 0)):.0e}",
             'Weight Decay (P1/P2)': f"{float(training_config.get('phase1_wd', 0)):.0e}/{float(training_config.get('phase2_wd', 0)):.0e}",
             'scheduler': training_config.get('scheduler', 'unknown'),
@@ -298,7 +295,7 @@ class ResultsAggregator:
             'train size': dataset_sizes.get('train', 0),
             'test size': dataset_sizes.get('test', 0),
             'val size': dataset_sizes.get('val', 0),
-            'age class scheme': training_config.get('age_class_scheme', '8-class'),
+            'age class scheme': training_config.get('age_class_scheme'),
         }
         
         self.results.append(result)

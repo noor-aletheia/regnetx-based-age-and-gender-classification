@@ -49,7 +49,6 @@ class DualHeadRegNetX(nn.Module):
     def _create_backbone(self, model_name: str, pretrained: bool):
         """Create the backbone network using unified RegNet interface"""
         try:
-            # Map legacy model names to REGNET_MODEL_ZOO keys
             model_mapping = {
                 'regnet_1600m': 'regnet_1600m',
                 'regnet_200m': 'regnet_200m',
@@ -57,15 +56,12 @@ class DualHeadRegNetX(nn.Module):
                 'regnet_600m': 'regnet_600m',
                 'regnet_800m': 'regnet_800m',
                 'regnet_3200m': 'regnet_3200m',
-                'regnet_4000m': 'regnet_4000m',
                 'regnet_6400m': 'regnet_6400m',
             }
             if model_name not in model_mapping:
                 raise ValueError(f"Unsupported model: {model_name}")
             regnet_key = model_mapping[model_name]
-            # Use get_regnet to create backbone (pretrained or not)
             full_model = get_regnet(regnet_key, pretrained=pretrained)
-            # Remove the classification head if present
             backbone_modules = []
             for name, module in full_model.named_children():
                 if name != 'head':
@@ -82,13 +78,10 @@ class DualHeadRegNetX(nn.Module):
     def _get_feature_dim(self) -> int:
         """Get the feature dimension of the backbone from REGNET_MODEL_ZOO or auto-detect."""
         regnet_key = self.model_name
-        # Map legacy names to REGNET_MODEL_ZOO keys
-        # No legacy_map needed; only available models are supported
         if regnet_key in REGNET_MODEL_ZOO:
             feature_dim = REGNET_MODEL_ZOO[regnet_key]['feature_dim']
             logger.info(f"Using feature dimension from REGNET_MODEL_ZOO for {self.model_name}: {feature_dim}")
             return feature_dim
-        # Fallback: auto-detect
         test_input = torch.randn(1, 3, 224, 224)
         try:
             with torch.no_grad():
@@ -110,9 +103,11 @@ class DualHeadRegNetX(nn.Module):
                 nn.Flatten(),
                 nn.Dropout(0.4),
                 nn.Linear(input_dim, 512),
+                nn.BatchNorm1d(512),
                 nn.ReLU(inplace=True),
                 nn.Dropout(0.5),
                 nn.Linear(512, 256),
+                nn.BatchNorm1d(256),
                 nn.ReLU(inplace=True),
                 nn.Dropout(0.5),
                 nn.Linear(256, num_classes)
@@ -123,9 +118,11 @@ class DualHeadRegNetX(nn.Module):
                 nn.Flatten(),
                 nn.Dropout(0.4),
                 nn.Linear(input_dim, 512),
+                nn.BatchNorm1d(512),
                 nn.ReLU(inplace=True),
                 nn.Dropout(0.5),
                 nn.Linear(512, 256),
+                nn.BatchNorm1d(256),
                 nn.ReLU(inplace=True),
                 nn.Dropout(0.3),
                 nn.Linear(256, num_classes)
@@ -184,7 +181,7 @@ class ModelFactory:
     """Factory class for creating RegNetX models"""
     
     SUPPORTED_MODELS = [
-        'regnet_1600m', 'regnet_200m', 'regnet_400m', 'regnet_600m', 'regnet_800m', 'regnet_3200m', 'regnet_4000m', 'regnet_6400m'
+        'regnet_1600m', 'regnet_200m', 'regnet_400m', 'regnet_600m', 'regnet_800m', 'regnet_3200m', 'regnet_6400m'
     ]
     
     @staticmethod
@@ -202,9 +199,10 @@ class ModelFactory:
         if model_name not in ModelFactory.SUPPORTED_MODELS:
             raise ValueError(f"Unsupported model: {model_name}. Supported models: {ModelFactory.SUPPORTED_MODELS}")
         
-        num_age_classes = int(config.get('dataset.age_classes', 8))
+        num_age_classes = int(config.get('dataset.age_classes'))
         num_gender_classes = int(config.get('dataset.gender_classes', 2))
         pretrained = config.get('models.pretrained', True)
+        pretrained_model_path = config.get('models.pretrained_model_path', None)
         
         model = DualHeadRegNetX(
             model_name=model_name,
@@ -212,6 +210,10 @@ class ModelFactory:
             num_gender_classes=num_gender_classes,
             pretrained=pretrained
         )
+        
+        # Load custom pretrained weights if provided
+        if pretrained_model_path:
+            ModelFactory.load_pretrained_weights(model, pretrained_model_path, num_age_classes)
         
         return model
     
@@ -241,6 +243,68 @@ class ModelFactory:
         logger.info(f"Feature dimension: {info['feature_dim']}")
         logger.info(f"Age classes: {info['age_classes']}")
         logger.info(f"Gender classes: {info['gender_classes']}")
+    
+    @staticmethod
+    def load_pretrained_weights(model: DualHeadRegNetX, pretrained_path: str, target_age_classes: int):
+        """
+        Load pretrained weights from another model with potentially different number of classes
+        
+        Args:
+            model: Target model to load weights into
+            pretrained_path: Path to pretrained model file
+            target_age_classes: Number of age classes in target model
+        """
+        logger.info(f"Loading pretrained weights from: {pretrained_path}")
+        
+        # Load pretrained state dict
+        pretrained_state = torch.load(pretrained_path, map_location='cpu')
+        
+        # Handle different state dict formats (raw model vs saved with metadata)
+        if 'model_state_dict' in pretrained_state:
+            pretrained_weights = pretrained_state['model_state_dict']
+        elif 'state_dict' in pretrained_state:
+            pretrained_weights = pretrained_state['state_dict'] 
+        else:
+            pretrained_weights = pretrained_state
+        
+        # Get current model state
+        current_state = model.state_dict()
+        
+        # Copy compatible weights
+        loaded_keys = []
+        skipped_keys = []
+        
+        for key, pretrained_weight in pretrained_weights.items():
+            if key in current_state:
+                current_weight = current_state[key]
+                
+                # Check if shapes match
+                if pretrained_weight.shape == current_weight.shape:
+                    current_state[key] = pretrained_weight
+                    loaded_keys.append(key)
+                else:
+                    skipped_keys.append(f"{key} (shape mismatch: {pretrained_weight.shape} vs {current_weight.shape})")
+            else:
+                skipped_keys.append(f"{key} (not found in target model)")
+        
+        # Load the updated state dict
+        model.load_state_dict(current_state)
+        
+        logger.info(f"Successfully loaded {len(loaded_keys)} parameter groups")
+        logger.info(f"Skipped {len(skipped_keys)} parameter groups due to incompatibility:")
+        for key in skipped_keys[:5]:  # Show first 5 skipped keys
+            logger.info(f"  - {key}")
+        if len(skipped_keys) > 5:
+            logger.info(f"  ... and {len(skipped_keys) - 5} more")
+        
+        # Special handling for classification heads
+        age_head_loaded = any('age_classifier' in key for key in loaded_keys)
+        gender_head_loaded = any('gender_classifier' in key for key in loaded_keys)
+        
+        if not age_head_loaded:
+            logger.info("Age classifier head will be randomly initialized (different number of classes)")
+        if not gender_head_loaded:
+            logger.info("Gender classifier head will be randomly initialized")
     
     @staticmethod
     def list_available_models():

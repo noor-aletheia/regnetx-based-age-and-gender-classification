@@ -60,16 +60,24 @@ class CSVColumnDetector:
     @staticmethod
     def detect_age_column(df: pd.DataFrame) -> str:
         """Detect age column in DataFrame"""
+        # Order patterns from most specific to least specific
         age_patterns = [
-            r'^age$', r'^age_group$', r'^age_class$', r'^age_category$',
-            r'^ages$', r'^age_label$', r'^age_range$', r'age', r'Age'
+            r'^age$', r'^ages$', r'^age_group$', r'^age_class$', r'^age_category$',
+            r'^age_label$', r'^age_range$'
         ]
         
+        # First try exact matches (case-insensitive)
         for col in df.columns:
             for pattern in age_patterns:
                 if re.search(pattern, col, re.IGNORECASE):
                     logger.info(f"Detected age column: {col}")
                     return col
+        
+        # If no exact match, try partial matches but exclude 'image' column specifically
+        for col in df.columns:
+            if col.lower() != 'image' and ('age' in col.lower()):
+                logger.info(f"Detected age column: {col}")
+                return col
         
         raise ValueError(f"Could not detect age column in CSV. Available columns: {list(df.columns)}")
     
@@ -172,27 +180,47 @@ class LabelEncoder:
     
     def _create_4class_mapping(self, age_labels: List[str]) -> Dict[str, int]:
         """Create mapping from original age labels to 4 age groups"""
+        # Handle pre-defined age group strings (for existing datasets)
         age_to_group_mapping = {
-
+            # Original dataset age groups
             "0-2": 0, "3-9": 0,
-
             "10-19": 1, "20-29": 1,
-
             "30-39": 2, "40-49": 2,
-
-            "50-59": 3, "60-69": 3, "70+": 3
+            "50-59": 3, "60-69": 3, "70+": 3,
+            # UTKFace age groups (4-class system)
+            "0-9": 0,
+            "10-29": 1,
+            "30-49": 2,
+            "50-70+": 3,
+            "50+": 3,
         }
         
-
+        def numerical_age_to_group(age: int) -> int:
+            """Convert numerical age to 4-class group index"""
+            if age <= 9:
+                return 0  # 0-9
+            elif age <= 29:
+                return 1  # 10-29
+            elif age <= 49:
+                return 2  # 30-49
+            else:
+                return 3  # 50+
+        
         age_to_idx = {}
         for age_label in age_labels:
             if age_label in age_to_group_mapping:
+                # Handle pre-defined age group strings
                 age_to_idx[age_label] = age_to_group_mapping[age_label]
             else:
-                logger.warning(f"Unknown age label '{age_label}', defaulting to group 3 (50-70+)")
-                age_to_idx[age_label] = 3
+                # Try to convert to numerical age
+                try:
+                    numerical_age = int(age_label)
+                    age_to_idx[age_label] = numerical_age_to_group(numerical_age)
+                except (ValueError, TypeError):
+                    logger.warning(f"Unknown age label '{age_label}', defaulting to group 3 (50-70+)")
+                    age_to_idx[age_label] = 3
         
-
+        # Add special cases
         age_to_idx["more than 70"] = 3
         
         return age_to_idx
@@ -385,7 +413,7 @@ class DataProcessor:
             test_data = val_data.copy()
         
 
-        age_class_scheme = self.config.get('dataset.age_class_scheme', '8-class')
+        age_class_scheme = self.config.get('dataset.age_class_scheme')
         self.label_encoder.fit_age_labels(train_data['age'].tolist(), age_class_scheme)
         self.label_encoder.fit_gender_labels(train_data['gender'].tolist())
         
@@ -434,48 +462,52 @@ class DataProcessor:
             logger.info(f"  {gender}: {count} ({percentage:.1f}%)")
     
     def _create_transforms(self) -> Dict[str, transforms.Compose]:
-        """Create image transforms for train, validation, and test sets, using presets for age/gender"""
-        presets = self.config.get('augmentation.presets', {})
-        train_cfg = self.config.get('augmentation.train', {})
-        mean = train_cfg.get('normalize', {}).get('mean', [127/255, 127/225, 127/225])
-        std = train_cfg.get('normalize', {}).get('std', [127/255, 127/225, 127/225])
+        """Create image transforms for train, validation, and test sets. If --no-augmentation is set, only normalize and convert to tensor; else apply augmentations from config."""
+        # Check for CLI flag in config
+        no_aug = self.config.get('no_augmentation', False)
+        print(no_aug)
+        train_norm = self.config.get('augmentation.train', {}).get('normalize', {})
+        val_test_norm = self.config.get('augmentation.val_test', {}).get('normalize', {})
+        mean = train_norm.get('mean', [0.5, 0.5, 0.5])
+        std = train_norm.get('std', [0.5, 0.5, 0.5])
+        val_mean = val_test_norm.get('mean', [0.5, 0.5, 0.5])
+        val_std = val_test_norm.get('std', [0.5, 0.5, 0.5])
 
-        def build_transform(preset_name):
-            preset = presets.get(preset_name, {})
+        if no_aug:
+            # Only normalization and tensor conversion
+            train_transform = transforms.Compose([
+                transforms.Resize((self.image_size, self.image_size)),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=mean, std=std)
+            ])
+            print("Data augmentation disabled via --no-augmentation flag.")
+        else:
+            aug_cfg = self.config.get('augmentation.mode', {})
             t = [transforms.Resize((self.image_size, self.image_size))]
-            if preset.get('random_resized_crop', False):
-                t.append(transforms.RandomResizedCrop(self.image_size, scale=(0.7, 1.0)))
-            if preset.get('horizontal_flip', 0):
-                t.append(transforms.RandomHorizontalFlip(p=preset['horizontal_flip']))
-            if preset.get('rotation', 0):
-                t.append(transforms.RandomRotation(degrees=preset['rotation']))
-            if 'color_jitter' in preset:
-                cj = preset['color_jitter']
+            if aug_cfg.get('horizontal_flip', 0):
+                t.append(transforms.RandomHorizontalFlip(p=aug_cfg['horizontal_flip']))
+            if 'random_affine' in aug_cfg:
+                affine = aug_cfg['random_affine']
+                t.append(transforms.RandomAffine(
+                    degrees=affine.get('degrees', 0),
+                    translate=affine.get('translate', (0, 0)),
+                    scale=affine.get('scale', (1.0, 1.0)),
+                    shear=affine.get('shear', 0)
+                ))
+            if 'color_jitter' in aug_cfg:
+                cj = aug_cfg['color_jitter']
                 t.append(transforms.ColorJitter(
                     brightness=cj.get('brightness', 0),
                     contrast=cj.get('contrast', 0),
                     saturation=cj.get('saturation', 0),
                     hue=cj.get('hue', 0)
                 ))
-            if preset.get('random_erasing', 0):
-                t.append(transforms.ToTensor())
-                t.append(transforms.Normalize(mean=mean, std=std))
-                t.append(transforms.RandomErasing(p=preset['random_erasing']))
-            else:
-                t.append(transforms.ToTensor())
-                t.append(transforms.Normalize(mean=mean, std=std))
-            return transforms.Compose(t)
+            # No random resized crop
+            t.append(transforms.ToTensor())
+            t.append(transforms.Normalize(mean=mean, std=std))
+            train_transform = transforms.Compose(t)
+            print("Data augmentation enabled as per configuration.")
 
-
-        age_transform = build_transform(train_cfg.get('age', 'strong'))
-        gender_transform = build_transform(train_cfg.get('gender', 'medium'))
-
-
-        train_transform = age_transform
-
-        val_test_cfg = self.config.get('augmentation.val_test', {})
-        val_mean = val_test_cfg.get('normalize', {}).get('mean', [127/255, 127/225, 127/225])
-        val_std = val_test_cfg.get('normalize', {}).get('std', [127/255, 127/225, 127/225])
         val_test_transforms = [
             transforms.Resize((self.image_size, self.image_size)),
             transforms.ToTensor(),

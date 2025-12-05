@@ -42,7 +42,7 @@ def parse_arguments():
     parser.add_argument('--input-size', type=int,
                        help='Input image size (overrides config)')
     parser.add_argument('--num-workers', type=int,
-                       help='Number of data loading workers (overrides config)')
+                       help='Number of data  workers (overrides config)')
     
     parser.add_argument('--epochs', type=int,
                        help='Total number of epochs (overrides both phases)')
@@ -59,8 +59,6 @@ def parse_arguments():
     
     parser.add_argument('--no-augmentation', action='store_true',
                        help='Disable data augmentation')
-    parser.add_argument('--augmentation-strength', choices=['light', 'medium', 'strong'],
-                       help='Augmentation strength preset')
     
     parser.add_argument('--device', choices=['auto', 'cuda', 'cpu'],
                        default='auto', help='Device to use for training')
@@ -86,8 +84,10 @@ def parse_arguments():
     parser.add_argument('--class_weight_power_alpha', type=float,
                         help='Alpha value for power scaling of class weights (overrides config)')
     
-    parser.add_argument('--age-classes', choices=['8-class', '4-class'], default='8-class',
+    parser.add_argument('--age-classes', choices=['8-class', '4-class'],
                         help='Age classification scheme: 8-class (original) or 4-class (0-9, 10-29, 30-49, 50-70+)')
+    parser.add_argument('--pretrained-model', type=str,
+                        help='Path to pretrained model weights (.pth file) for transfer learning')
      
     return parser.parse_args()
 
@@ -128,31 +128,17 @@ def create_runtime_config(args, base_config_path: str) -> Config:
         config.set('training.phase2.weight_decay', args.weight_decay)
     
     if args.no_augmentation:
-        config.set('augmentation.train.horizontal_flip', 0.0)
-        config.set('augmentation.train.rotation', 0)
+        config.set('augmentation.train.motion_blur.prob', 0.0)
+        config.set('augmentation.train.random_affine.degrees', 0)
         config.set('augmentation.train.color_jitter.brightness', 0.0)
         config.set('augmentation.train.color_jitter.contrast', 0.0)
         config.set('augmentation.train.color_jitter.saturation', 0.0)
         config.set('augmentation.train.color_jitter.hue', 0.0)
+        config.set('augmentation.train.horizontal_flip', 0.0)
+        config.set('augmentation.train.sharpening.prob', 0.0)
+        config.set('augmentation.train.clahe.prob', 0.0)
+        config.set('no_augmentation', True)
         logger.info("Data augmentation disabled")
-    
-    elif args.augmentation_strength:
-        if args.augmentation_strength == 'light':
-            config.set('augmentation.train.horizontal_flip', 0.3)
-            config.set('augmentation.train.rotation', 3)
-            config.set('augmentation.train.color_jitter.brightness', 0.05)
-            config.set('augmentation.train.color_jitter.contrast', 0.05)
-        elif args.augmentation_strength == 'medium':
-            config.set('augmentation.train.horizontal_flip', 0.5)
-            config.set('augmentation.train.rotation', 5)
-            config.set('augmentation.train.color_jitter.brightness', 0.1)
-            config.set('augmentation.train.color_jitter.contrast', 0.1)
-        elif args.augmentation_strength == 'strong':
-            config.set('augmentation.train.horizontal_flip', 0.7)
-            config.set('augmentation.train.rotation', 10)
-            config.set('augmentation.train.color_jitter.brightness', 0.2)
-            config.set('augmentation.train.color_jitter.contrast', 0.2)
-        logger.info(f"Augmentation strength set to: {args.augmentation_strength}")
     
     if args.device != 'auto':
         config.set('hardware.device', args.device)
@@ -182,6 +168,9 @@ def create_runtime_config(args, base_config_path: str) -> Config:
     
     config.set('dataset.age_class_scheme', args.age_classes)
     
+    if args.pretrained_model:
+        config.set('models.pretrained_model_path', args.pretrained_model)
+    
     return config
 
 def determine_models_to_train(args, config: Config) -> List[str]:
@@ -200,7 +189,7 @@ def determine_models_to_train(args, config: Config) -> List[str]:
     else:
         return config.get('models.variants', [
             'regnet_200m', 'regnet_400m', 'regnet_600m', 'regnet_800m',
-            'regnet_1600m', 'regnet_3200m', 'regnet_4000m', 'regnet_6400m'])
+            'regnet_1600m', 'regnet_3200m', 'regnet_6400m'])
 
 def print_training_summary(config: Config, models_to_train: List[str]):
     """Print training configuration summary"""
@@ -212,7 +201,7 @@ def print_training_summary(config: Config, models_to_train: List[str]):
     logger.info(f"Dataset path: {config.get('dataset.path')}")
     logger.info(f"Batch size: {config.get('dataset.batch_size')}")
     logger.info(f"Input size: {config.get('dataset.image_size')}")
-    logger.info(f"Age class scheme: {config.get('dataset.age_class_scheme', '8-class')}")
+    logger.info(f"Age class scheme: {config.get('dataset.age_class_scheme')}")
     logger.info(f"Phase 1 epochs: {config.get('training.phase1.epochs')}")
     logger.info(f"Phase 2 epochs: {config.get('training.phase2.epochs')}")
     logger.info(f"Phase 1 LR: {config.get('training.phase1.learning_rate')}")
@@ -220,12 +209,18 @@ def print_training_summary(config: Config, models_to_train: List[str]):
     logger.info(f"Mixed precision: {config.get('hardware.mixed_precision')}")
     logger.info(f"Device: {config.get('hardware.device')}")
     
-    horizontal_flip = config.get('augmentation.train.horizontal_flip', 0)
-    rotation = config.get('augmentation.train.rotation', 0)
-    if horizontal_flip > 0 or rotation > 0:
-        logger.info(f"Augmentation: Enabled (flip: {horizontal_flip}, rotation: {rotation}°)")
+    # Show pretrained model path if specified
+    pretrained_model_path = config.get('models.pretrained_model_path')
+    if pretrained_model_path:
+        logger.info(f"Pretrained model: {pretrained_model_path}")
     else:
-        logger.info("Augmentation: Disabled")
+        logger.info("Pretrained model: Using ImageNet weights")
+    
+    # horizontal_flip = config.get('augmentation.train.horizontal_flip', 0)
+    # if horizontal_flip > 0:
+    #     logger.info(f"Augmentation: Enabled (flip: {horizontal_flip})")
+    # else:
+    #     logger.info("Augmentation: Disabled")
     
     logger.info(f"Output directory: {config.get('output.models_dir')}")
     logger.info("="*60)
@@ -239,11 +234,11 @@ def main():
     
     if args.list_models:
         logger.info("Available models:")
-        logger.info("  regnet_200m, regnet_400m, regnet_600m, regnet_800m, regnet_1600m, regnet_3200m, regnet_4000m, regnet_6400m")
+        logger.info("  regnet_200m, regnet_400m, regnet_600m, regnet_800m, regnet_1600m, regnet_3200m, regnet_6400m")
         logger.info("\nRecommended RegNetX models by size:")
         logger.info("  Small  (~0.2-0.8M params): regnet_200m, regnet_400m, regnet_600m, regnet_800m")
         logger.info("  Medium (~1.6-3.2M params): regnet_1600m, regnet_3200m")
-        logger.info("  Large  (~4.0-6.4M params): regnet_4000m, regnet_6400m")
+        logger.info("  Large  (~4.0-6.4M params): regnet_6400m")
         return
     
     logger.info("Loading configuration...")

@@ -96,16 +96,16 @@ def show_progress(blocknum, blocksize, totalsize):
 def main():
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('-i', '--onnx', type=str, default='/app/outputs/models/scratch_2/regnet_800m.onnx', help='ONNX model path')
+    parser.add_argument('-i', '--onnx', type=str, default='/app/outputs/models/regnet800/regnet_800m_final.onnx', help='ONNX model path')
     parser.add_argument('-n', '--name', type=str, default='regnet_800m', help='Model name')
-    parser.add_argument('--img', type=str, default='/app/resnet50v2/img_00001.jpg', help='Image for inference')
-    parser.add_argument('--labels', type=str, default='/app/resnet50v2/labels.txt', help='Labels file for age head (output 0)')
+    parser.add_argument('--img', type=str, default='/app/quantize/img_00001.jpg', help='Image for inference')
+    parser.add_argument('--labels', type=str, default='/app/quantize/labels.txt', help='Labels file for age head (output 0)')
     parser.add_argument('--img_size', nargs='+', type=int, default=[224,224], help='Inference size h,w')
     parser.add_argument('--rknn', type=str, default='./rknn_models', help='RKNN output directory')
     parser.add_argument('--platform', type=str, default='rk3576', help='Target platform')
-    parser.add_argument('--mean_values', nargs='+', type=float, default=[0.498, 0.498, 0.498], help='Mean values for normalization')
-    parser.add_argument('--std_values', nargs='+', type=float, default=[0.498, 0.498, 0.498], help='Std values for normalization')
-    parser.add_argument('--datasets', type=str, default='/app/resnet50v2/dataset.txt', help='Datasets path file for calibration')
+    parser.add_argument('--mean_values', nargs='+', type=float, default=[0.5, 0.5, 0.5], help='Mean values for normalization')
+    parser.add_argument('--std_values', nargs='+', type=float, default=[0.5, 0.5, 0.5], help='Std values for normalization')
+    parser.add_argument('--datasets', type=str, default='/app/quantize/dataset.txt', help='Datasets path file for calibration')
     parser.add_argument('--do_quant', action='store_true', help='Enable quantization (int8)')
     parser.add_argument('--no_quant', dest='do_quant', action='store_false', help='Disable quantization (fp16)')
     parser.set_defaults(do_quant=True)
@@ -150,10 +150,31 @@ def main():
         exit(ret)
     print('done')
 
-    # Optional accuracy analysis
-    if args.accuracy_image:
-        print('--> Accuracy analysis on {}'.format(args.accuracy_image))
-        rknn.accuracy_analysis(inputs=[args.accuracy_image])
+    # Accuracy analysis with cosine similarity
+    print('--> Running accuracy analysis to compute cosine similarity')
+    if args.accuracy_image and os.path.exists(args.accuracy_image):
+        accuracy_input = args.accuracy_image
+    else:
+        # Use first image from dataset for accuracy analysis
+        accuracy_input = None
+        with open(dataset_file, 'r') as f:
+            for line in f:
+                img_name = line.strip()
+                img_path = img_name if os.path.exists(img_name) else os.path.join('/app/images', img_name)
+                if os.path.exists(img_path):
+                    accuracy_input = img_path
+                    break
+    
+    if accuracy_input:
+        print(f'--> Accuracy analysis on {accuracy_input}')
+        # This will print cosine similarity for each layer
+        ret = rknn.accuracy_analysis(inputs=[accuracy_input])
+        if ret != 0:
+            print('Accuracy analysis failed!')
+        else:
+            print('Cosine similarity analysis completed - check output above')
+    else:
+        print('No suitable image found for accuracy analysis')
 
 
     # Batch inference over dataset.txt
@@ -162,7 +183,7 @@ def main():
     with open(dataset_file, 'r') as f:
         image_list = [line.strip() for line in f if line.strip()]
 
-    img_dir = '/app/batbox_dataset'
+    img_dir = '/app/images'
     total_time = 0.0
     total_bytes = 0
     count = 0
@@ -199,7 +220,7 @@ def main():
             continue
         if count < 3:
             print(f'Image: {img_name}')
-            show_outputs(outputs, [args.labels, '/app/resnet50v2/gender_labels.txt'])
+            show_outputs(outputs, [args.labels, '/app/quantize/gender_labels.txt'])
             print('Speed:', readable_speed(elapsed, mode='inference', count=1), '| Data:', readable_speed(img_bytes, mode='transfer', count=elapsed))
             print('-' * 40)
         total_time += elapsed

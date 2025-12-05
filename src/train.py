@@ -106,7 +106,6 @@ def train_single_model(model_name: str, config: Config, data_processor: DataProc
         logger.info("Evaluating on test set...")
         test_results = trainer.evaluate(test_loader)
 
-        # Use test set FPS from test_results['performance']['overall_fps']
         test_fps = test_results.get('performance', {}).get('overall_fps', 0.0)
 
         training_logger.log_test_results(test_results)
@@ -132,7 +131,7 @@ def train_single_model(model_name: str, config: Config, data_processor: DataProc
         training_config = {
             'phase1_epochs': config.get('training.phase1.epochs', 0),
             'phase2_epochs': config.get('training.phase2.epochs', 0),
-            'augmentation_preset': f"age:{config.get('augmentation.train.age', 'unknown')}, gender:{config.get('augmentation.train.gender', 'unknown')}",
+            'augmentation_mode': config.get('augmentation.mode', {}),
             'phase1_lr': config.get('training.phase1.learning_rate', 0),
             'phase2_lr': config.get('training.phase2.learning_rate', 0),
             'phase1_wd': config.get('training.phase1.weight_decay', 0),
@@ -141,7 +140,7 @@ def train_single_model(model_name: str, config: Config, data_processor: DataProc
             'class_weight_alpha': config.get('training.class_weight_power_alpha', 1.0),
             'loss_type': config.get('training.loss_type', 'unknown'),
             'batch_size': config.get('dataset.batch_size', 0),
-            'age_class_scheme': config.get('dataset.age_class_scheme', '8-class')
+            'age_class_scheme': config.get('dataset.age_class_scheme')
         }
 
         dataset_sizes = {

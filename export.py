@@ -40,8 +40,8 @@ class UniversalModelWrapper(nn.Module):
         super().__init__()
         self.backbone = backbone.eval()
         self.target_size = target_size
-        self.register_buffer('norm_mean', torch.tensor([0.498, 0.498, 0.498], dtype=torch.float32).view(1, 3, 1, 1))
-        self.register_buffer('norm_std', torch.tensor([0.498, 0.498, 0.498], dtype=torch.float32).view(1, 3, 1, 1))
+        self.register_buffer('norm_mean', torch.tensor([0.5, 0.5, 0.5], dtype=torch.float32).view(1, 3, 1, 1))
+        self.register_buffer('norm_std', torch.tensor([0.5, 0.5, 0.5], dtype=torch.float32).view(1, 3, 1, 1))
         self.register_buffer('scale_factor', torch.tensor(255.0, dtype=torch.float32))
 
     def forward(self, x):
@@ -145,8 +145,8 @@ def export_and_compare(checkpoint_path, onnx_path, img_path, use_wrapper=True,
     
     # Apply same preprocessing as training: ToTensor() + Normalize()
     img_tensor = torch.from_numpy(img_rgb).permute(2, 0, 1).float() / 255.0  # ToTensor() equivalent
-    mean = torch.tensor([0.498, 0.498, 0.498], dtype=torch.float32).view(3, 1, 1)
-    std = torch.tensor([0.498, 0.498, 0.498], dtype=torch.float32).view(3, 1, 1)
+    mean = torch.tensor([0.5, 0.5, 0.5], dtype=torch.float32).view(3, 1, 1)
+    std = torch.tensor([0.5, 0.5, 0.5], dtype=torch.float32).view(3, 1, 1)
     img_normalized = (img_tensor - mean) / std  # Normalize() equivalent
     
     input_batch = img_normalized.unsqueeze(0).to(device)  # BCHW

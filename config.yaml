@@ -1,23 +1,23 @@
 dataset:
-  path: "/app/expanded_merged_dataset"
-  batch_size: 32
+  path: "/workspace/expanded_merged_dataset"
+  batch_size: 256
   num_workers: 4
   age_class_scheme: "4-class"
 
 models:
-  variants: ["regnet_200m", "regnet_400m", "regnet_600m", "regnet_800m", "regnet_1600m", "regnet_3200m", "regnet_4000m", "regnet_6400m"]
+  variants: ["regnet_200m", "regnet_400m", "regnet_600m", "regnet_800m", "regnet_1600m", "regnet_3200m", "regnet_6400m"]
   pretrained: true
 training:
   phase1:
-    epochs: 20
-    learning_rate: 1e-3
-    weight_decay: 1e-4
-    patience: 8
-  phase2:
-    epochs: 40
-    learning_rate: 5e-4
+    epochs: 5
+    learning_rate: 8e-5
     weight_decay: 1e-5
-    patience: 20
+    patience: 5
+  phase2:
+    epochs: 25
+    learning_rate: 2e-5
+    weight_decay: 5e-6
+    patience: 8
   loss_type: "focal"
   
   optimizer: "AdamW"
@@ -28,73 +28,46 @@ training:
   age_loss_weight: 1.5
   gender_loss_weight: 1.0
   class_weight_mode: "power"
-  class_weight_power_alpha: 2.0
+  class_weight_power_alpha: 2.3
   loss_weights:
     age: null
     gender: null
 
 augmentation:
-  presets:
-    strong:
-      at_least_one_bbox_random_crop: 0.3
-      d4_transform: 0.2
-      
-      gaussian_blur:
-        prob: 0.15
-        blur_limit: [1, 3]
-      defocus:
-        prob: 0.1
-        radius: [1, 2]
-      motion_blur:
-        prob: 0.1
-        blur_limit: [3, 5]
-      
-      gaussian_noise:
-        prob: 0.15
-        var_limit: [10, 30]
-      downscale:
-        prob: 0.1
-        scale_range: [0.7, 0.9]
-      
-      clahe:
-        prob: 0.2
-        clip_limit: [1, 2]
-      to_gray:
-        prob: 0.05
-      
-      grid_distortion:
-        prob: 0.15
-        distort_limit: 0.1
-      
-      rotation: 10
-      color_jitter:
-        brightness: 0.2
-        contrast: 0.2
-        saturation: 0.2
-        hue: 0.05
-      horizontal_flip: 0.5
-      random_resized_crop: true
-      random_erasing: 0.15
-    medium:
-      horizontal_flip: 0.5
-      rotation: 10
-      color_jitter:
-        brightness: 0.2
-        contrast: 0.2
-        saturation: 0.2
-        hue: 0.05
-      random_resized_crop: false
-      random_erasing: 0.1
+  mode:
+    motion_blur:
+      prob: 0.25
+      blur_limit: [3, 7]
+      angle: [0, 180]
+    random_affine:
+      degrees: 7
+      translate: [0.03, 0.03]
+      scale: [0.97, 1.03]
+      shear: 5
+    color_jitter:
+      brightness: 0.1
+      contrast: 0.25
+      saturation: 0.1
+      hue: 0.02
+    horizontal_flip: 0.5
+    sharpening:
+      prob: 0.15
+      intensity: 1.5
+      radius: 2
+      percent: 150
+      threshold: 3
+    clahe:
+      prob: 0.15
+      clip_limit: 2.0
+      tile_grid_size: [8, 8]
   train:
-    age: strong
-    gender: strong
     normalize:
-      mean: [0.498, 0.498, 0.498]
-      std: [0.498, 0.498, 0.498]
+      mean: [0.5, 0.5, 0.5]
+      std: [0.5, 0.5, 0.5]
   val_test:
     normalize:
-      mean: [0.498, 0.498, 0.498]
-      std: [0.498, 0.498, 0.498]
+      mean: [0.5, 0.5, 0.5]
+      std: [0.5, 0.5, 0.5]
 
 output:
   models_dir: "/outputs/models"

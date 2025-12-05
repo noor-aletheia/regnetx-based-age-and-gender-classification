@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 
 class EarlyStopping:
     """Early stopping utility to stop training when validation loss doesn't improve"""
-    
-    def __init__(self, patience: int = 5, min_delta: float = 0.001, restore_best_weights: bool = True):
+
+    def __init__(self, patience: int = 5, min_delta: float = 0.005, restore_best_weights: bool = False):
         """
         Initialize early stopping
         
@@ -294,7 +294,7 @@ class TwoPhaseTrainer:
             outputs = self.model(images)
             age_loss = self.age_loss_fn(outputs['age'], age_labels)
             gender_loss = self.gender_loss_fn(outputs['gender'], gender_labels)
-            total_loss = (self.age_loss_weight * age_loss + 
+            total_loss = (self.age_loss_weight * age_restore_best_weightsloss + 
                          self.gender_loss_weight * gender_loss)
         
         return outputs, total_loss, age_loss, gender_loss
@@ -419,7 +419,7 @@ class TwoPhaseTrainer:
                 self.epoch >= max_phase1_epochs)
     
     def _update_best_metrics(self, val_metrics: Dict[str, float]):
-        """Update best metrics if current ones are better"""
+        """Update best metrics if current ones are better and save checkpoint"""
         current_val_loss = float(val_metrics['val_loss'])
         best_val_loss = float(self.best_metrics['val_loss'])
         if current_val_loss < best_val_loss:
@@ -439,10 +439,8 @@ class TwoPhaseTrainer:
             Training history
         """
         logger.info(f"Starting training for {self.model.model_name}")
-        logger.info("=== Phase 1: Frozen Backbone Training ===")
-        
-        self.model.freeze_backbone()
-        
+        phase1_epochs = int(self.config.get('training.phase1.epochs', 10))
+        phase2_epochs = int(self.config.get('training.phase2.epochs', 15))
         history = {
             'epoch': [],
             'phase': [],
@@ -458,35 +456,36 @@ class TwoPhaseTrainer:
             'val_gender_f1': [],
             'learning_rate': []
         }
-        
         start_time = time.time()
-        max_epochs = (int(self.config.get('training.phase1.epochs', 10)) + 
-                     int(self.config.get('training.phase2.epochs', 15)))
-        
+        max_epochs = phase1_epochs + phase2_epochs
+
+        # Handle phase 1 skipping
+        if phase1_epochs == 0:
+            logger.info("Phase 1 disabled (0 epochs). Transitioning directly to Phase 2.")
+            self._transition_to_phase2()
+
         for epoch in range(max_epochs):
             self.epoch = epoch
-            
+
             train_metrics = self._train_epoch(train_loader)
-            
             val_metrics = self._validate_epoch(val_loader)
-            
             epoch_metrics = {**train_metrics, **val_metrics}
-            
+
             history['epoch'].append(epoch)
             history['phase'].append(self.current_phase)
             for key, value in epoch_metrics.items():
                 if key in history:
                     history[key].append(value)
             history['learning_rate'].append(self.optimizer.param_groups[0]['lr'])
-            
+
             self._log_epoch_progress(epoch, epoch_metrics)
-            
+
             if self.scheduler is not None:
                 if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
                     self.scheduler.step(val_metrics['val_loss'])
                 else:
                     self.scheduler.step()
-            
+
             if self._should_transition_to_phase2(val_metrics):
                 if self.current_phase == 1:
                     self._transition_to_phase2()
@@ -495,17 +494,23 @@ class TwoPhaseTrainer:
                         min_delta=0.001
                     )
                     continue
-            
+
             if self.early_stopping(val_metrics['val_loss'], self.model):
                 logger.info(f"Early stopping triggered at epoch {epoch}")
                 break
-            
+
             if self._update_best_metrics(val_metrics):
                 logger.info("New best model found!")
-        
+
         total_time = time.time() - start_time
         logger.info(f"Training completed in {total_time:.2f} seconds")
-        
+        # Save final model checkpoint
+        output_dir = self.config.get('output.models_dir', './outputs/models')
+        model_name = getattr(self.model, 'model_name', 'model')
+        os.makedirs(output_dir, exist_ok=True)
+        final_checkpoint_path = os.path.join(output_dir, f'{model_name}_final.pth')
+        torch.save(self.model.state_dict(), final_checkpoint_path)
+        logger.info(f"Saved final model checkpoint to {final_checkpoint_path}")
         return history
     
     def _log_epoch_progress(self, epoch: int, metrics: Dict[str, float]):
@@ -584,8 +589,6 @@ class TwoPhaseTrainer:
             gender_targets, gender_predictions, gender_class_names, 'gender'
         )
         if save_confusion_matrix:
-            # Try to use the same directory as training curves/history (logger directory)
-            # Fallback to output.logs_dir/model_name if not available
             log_dir = getattr(self, 'logger_dir', None)
             if log_dir is None:
                 output_dir = self.config.get('output.logs_dir', './outputs/logs')

@@ -1,14 +1,14 @@
 models:
     name: regnet_800m         # Model output name
     platform: onnx                   # Original model framework
-    model_file_path: /app/outputs/models/scratch_2/regnet_800m.onnx # Path to your ONNX model
+    model_file_path: /app/outputs/models/regnet800/regnet_800m_final.onnx # Path to your ONNX model
     quantize: true                   # Enable quantization
-    dataset: /app/resnet50v2/dataset.txt          # Quantization dataset (batbox images)
+    dataset: /app/quantize/dataset.txt          # Quantization dataset (batbox images)
     target_platform: rk3576          # Target platform for deployment
     configs:
       quantized_dtype: asymmetric_quantized-8
-      mean_values: [0.498, 0.498, 0.498]   # Use your model's mean
-      std_values: [0.498, 0.498, 0.498]    # Use your model's std
+      mean_values: [0.5, 0.5, 0.5]   # Use your model's mean
+      std_values: [0.5, 0.5, 0.5]    # Use your model's std
       quant_img_RGB2BGR: false
       quantized_algorithm: normal
       quantized_method: channel

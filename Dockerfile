@@ -14,17 +14,6 @@ RUN apt-get update && apt-get install -y \
     && pip install tensorboard \
     && mkdir -p /outputs/models /outputs/logs /outputs/tensorboard
 
-# Copy source code
-COPY src/ ./src/
-COPY config.yaml .
-COPY train_cli.py .
-COPY train_cli.sh .
-COPY inference.py .
-COPY export.py .
-COPY regnet.py .
-COPY reglayers.py .
-COPY regnet_weights/ ./regnet_weights/
-
 # Set environment variables
 ENV PYTHONPATH=/app/src:$PYTHONPATH
 ENV CUDA_VISIBLE_DEVICES=0
